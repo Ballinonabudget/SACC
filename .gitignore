@@ -1,0 +1,18 @@
+# Exclude media and heavy binaries
+ffprobe
+ffprobe.zip
+ingestion_zone/
+mock_m4_drive/
+test_data/
+*.mp4
+*.mov
+
+# Exclude generated logs and cached artifacts
+sacc_launchd.err
+sacc_launchd.log
+__pycache__/
+.DS_Store
+*.pyc
+
+# Exclude large dump files
+dump.json

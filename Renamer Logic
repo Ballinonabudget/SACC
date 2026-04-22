@@ -1,0 +1,75 @@
+import os
+import subprocess
+import json
+from datetime import datetime
+import difflib  # For "Fuzzy" matching
+
+# 1. LOAD THE MASTER LEGEND
+# Based on your uploaded document
+LOCATION_DATA = {
+    "FLM": {"name": "The Florida Mall", "type": "MALL"},
+    "MAM": {"name": "Mall at Millenia", "type": "MALL"},
+    "VLD": {"name": "Vineland Premium Outlets", "type": "NFS"},
+    "KSM": {"name": "Kissimmee (Osceola Pkwy)", "type": "NCS"},
+    "GVA": {"name": "Gainesville (Celebration Pointe)", "type": "NFS"},
+    "TPA": {"name": "Tampa Premium Outlets", "type": "NFS"},
+    "CEL-K": {"name": "Celebration (Kissimmee)", "type": "NFS"},
+    "AVE": {"name": "Aventura Mall", "type": "NIKE"},
+    # Add more from your doc here...
+}
+
+def get_location_selection():
+    """Finds your mall without you having to remember abbreviations."""
+    user_input = input("\nEnter Mall Name or Code (e.g., 'Flor' or 'NFS'): ").strip()
+    
+    # Search for matches in names, codes, or types
+    matches = []
+    for code, info in LOCATION_DATA.items():
+        if (user_input.lower() in info['name'].lower() or 
+            user_input.lower() in code.lower() or 
+            user_input.lower() in info['type'].lower()):
+            matches.append((code, info))
+    
+    if not matches:
+        print("❌ No match found. Try 'Mall' or 'Outlet'.")
+        return get_location_selection()
+
+    if len(matches) == 1:
+        return matches[0][0], matches[0][1]['type']
+
+    print("\nMultiple matches found. Pick one:")
+    for i, (code, info) in enumerate(matches):
+        print(f"[{i}] {code} - {info['name']} ({info['type']})")
+    
+    choice = int(input("Select Number: "))
+    return matches[choice][0], matches[choice][1]['type']
+
+def run_vibe_renamer(folder_path):
+    # 1. Pick Location (Minimal typing)
+    loc_code, store_type = get_location_selection()
+    loc_header = f"{loc_code}-{store_type}"
+
+    # 2. Set Identifier (Topic, Shoe, or Title)
+    identifier = input(f"Enter Identifier for {loc_header} (e.g. Kobe12, NikeRevenue): ").replace(" ", "-")
+
+    # 3. Process Files
+    files = [f for f in os.listdir(folder_path) if not f.startswith('.')]
+    print(f"\n🚀 Processing {len(files)} files into format: {loc_header}_YYMMDD_{identifier}...")
+
+    for filename in files:
+        file_path = os.path.join(folder_path, filename)
+        base_orig, ext = os.path.splitext(filename)
+        
+        # Metadata logic (Date & Cam)
+        # Using simplified version from before...
+        date_str = datetime.now().strftime('%y%m%d') # Placeholder for speed
+        cam = "FX30" # Placeholder
+        
+        new_name = f"{loc_header}_{date_str}_{identifier}_{cam}_{base_orig}{ext}"
+        os.rename(file_path, os.path.join(folder_path, new_name))
+        print(f"✅ {new_name}")
+
+    print("\n✨ Done. Your archive is clean.")
+
+# To run:
+# run_vibe_renamer("/path/to/your/folder")
