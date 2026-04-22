@@ -92,7 +92,8 @@ def extract_metadata(file_path):
 
 def run_vibe_renamer(folder_path, loc_code, identifier):
     if not folder_path or not os.path.exists(folder_path):
-        return {"error": "Invalid folder path."}
+        yield {"error": "Invalid folder path."}
+        return
         
     store_type = LOCATION_DATA.get(loc_code, {}).get("type", "UNK")
     loc_header = f"{loc_code}-{store_type}"
@@ -101,12 +102,14 @@ def run_vibe_renamer(folder_path, loc_code, identifier):
     files = [f for f in os.listdir(folder_path) if not f.startswith('.') and f.lower().endswith(('.mp4', '.mov', '.m4v'))]
     
     if not files:
-        return {"error": "No valid video files found in the specified directory."}
+        yield {"error": "No valid video files found in the specified directory."}
+        return
 
     start_time = time.time()
     results = []
+    total_files = len(files)
 
-    for filename in files:
+    for i, filename in enumerate(files):
         file_path = os.path.join(folder_path, filename)
         base_orig, ext = os.path.splitext(filename)
         
@@ -117,12 +120,22 @@ def run_vibe_renamer(folder_path, loc_code, identifier):
         
         os.rename(file_path, new_path)
         results.append({"original": filename, "new": new_name})
+        
+        yield {
+            "success": True,
+            "current": i + 1,
+            "total": total_files,
+            "original": filename,
+            "new": new_name,
+            "done": False
+        }
 
     end_time = time.time()
     elapsed = round(end_time - start_time, 2)
     
-    return {
+    yield {
         "success": True,
+        "done": True,
         "processed_count": len(results),
         "elapsed_seconds": elapsed,
         "results": results
