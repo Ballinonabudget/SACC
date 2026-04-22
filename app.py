@@ -287,19 +287,31 @@ st.markdown("""
 
 st.markdown("""
 <div class='intake-station'>
-    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 15px;">
-        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-        <line x1="12" y1="11" x2="12" y2="17"></line>
-        <polyline points="9 14 12 17 15 14"></polyline>
+    <svg width="68" height="68" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 12px;">
+        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line>
     </svg>
-    <div class='intake-title'>Modern Ingestion Pipeline</div>
+    <div class='intake-title'>Direct External Drive Pipeline</div>
     <div style='color:#065F46; font-size: 0.95em; font-weight: 500;'>
-        Drag-and-drop a folder directly from Finder into the text field below to target the absolute external directory link.
+        Files will be modified <b>in-place</b> directly on your external FCP Hard Drives. Absolutely no copies will be buffered.
     </div>
 </div>
 """, unsafe_allow_html=True)
 
-asset_dir = st.text_input("Intake Path", value="/Volumes/The Final Cut X/Naagle/Final Drive 5TB/AJ1 Collection VIdeo backup/Slomo Jordan 1 collection/Jordan 1 take 69", label_visibility="collapsed")
+col_path1, col_path2 = st.columns([8, 2])
+with col_path1:
+    asset_dir = st.text_input("Intake Path", value=st.session_state.get("sacc_target_path", ""), placeholder="e.g. /Volumes/Final_Drive_5TB/RAW_Footage", label_visibility="collapsed")
+with col_path2:
+    if st.button("📁 Native App Picker", use_container_width=True):
+        import subprocess
+        cmd = '''osascript -e 'tell app "System Events" to return POSIX path of (choose folder with prompt "Select the Target Directory for Processing")' '''
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if res.returncode == 0 and res.stdout.strip():
+            st.session_state["sacc_target_path"] = res.stdout.strip()
+            st.rerun()
+
+if asset_dir and asset_dir != st.session_state.get("sacc_target_path"):
+    st.session_state["sacc_target_path"] = asset_dir
+
 st.write("---")
 
 # ─────────────────────────────────────────────
