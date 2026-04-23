@@ -1,7 +1,244 @@
 // SACC — Import View (v2.0 — real backend wiring)
 // renamer_logic.py · LOCATION_DATA · Master_Whitelist_v1 · run_vibe_renamer generator
+// Pre-Flight Scan: ffprobe metadata layer — filters empty/low-data clips before Vortex API
 // Exports: ImportView
 
+// ── Pre-Flight Scan Panel ──────────────────────────────────────────────────────
+function PreFlightPanel({ queue, onSkipToggle, skipSet }) {
+  const P = SACC_PALETTE;
+  const [scanning, setScanning] = React.useState(false);
+  const [scanDone, setScanDone] = React.useState(false);
+  const [progress, setProgress] = React.useState(0);
+  const [scanLog,  setScanLog]  = React.useState([]);
+  const logRef = React.useRef(null);
+
+  const flagged  = queue.filter(q => q.preflight?.verdict === 'flag');   // auto-skip: duration / zero motion only
+  const reviewed = queue.filter(q => q.preflight?.verdict === 'review');  // amber: black frames, user decides
+  const passed   = queue.filter(q => q.preflight?.verdict === 'pass');
+
+  const COST_PER_MIN = 0.10;
+  const totalMins   = queue.reduce((s, q) => s + (q.preflight?.durationSecs || 0) / 60, 0);
+  const skippedMins = queue.filter(q => skipSet.has(q.id))
+                           .reduce((s, q) => s + (q.preflight?.durationSecs || 0) / 60, 0);
+  const totalCost   = (totalMins * COST_PER_MIN).toFixed(3);
+  const savedCost   = (skippedMins * COST_PER_MIN).toFixed(3);
+  const netCost     = ((totalMins - skippedMins) * COST_PER_MIN).toFixed(3);
+
+  // verdict → color/label: flag=red auto-skip, review=amber user-decides, pass=green clear
+  const verdictColor = { pass: P.success, review: P.warning, flag: P.error };
+  const verdictLabel = { pass: '✓ PASS', review: '● REVIEW', flag: '⚠ SKIP' };
+
+  const runScan = () => {
+    if (scanning) return;
+    setScanning(true); setScanDone(false); setProgress(0); setScanLog([]);
+    const autoFlagCost = (flagged.reduce((s,q)=>s+(q.preflight?.durationSecs||0),0)/60*COST_PER_MIN).toFixed(3);
+    const lines = [
+      '> [preflight] init — ffprobe v6.1 ready',
+      `> criteria: duration · motion score · black frames (audio/size exempt)`,
+      `> scanning ${queue.length} files in import queue…`,
+      ...queue.flatMap((q, i) => {
+        const pf = q.preflight || {};
+        const verdict = pf.verdict;
+        const statusLine = verdict === 'flag'
+          ? `>   ⚠ AUTO-SKIP — ${(pf.flagReasons||[]).join(' | ')}`
+          : verdict === 'review'
+          ? `>   ● REVIEW — ${(pf.reviewReasons||[]).join(' | ')}`
+          : `>   ✓ PASS — cleared for Vortex API`;
+        return [
+          `> [${i+1}/${queue.length}] ${q.origFile}`,
+          `>   size=${q.size} · duration=${pf.durationSecs ?? '?'}s · motion=${pf.motionScore ?? 0}/100 · black=${pf.blackFramePct ?? 0}%`,
+          statusLine,
+        ];
+      }),
+      `> scan complete — ${passed.length} pass · ${reviewed.length} review · ${flagged.length} auto-skip`,
+      `> Vortex cost (full queue): $${totalCost}`,
+      flagged.length > 0 ? `> auto-skip applied to ${flagged.length} clip(s) — saves $${autoFlagCost} per run` : `> no hard flags — all clips eligible`,
+      reviewed.length > 0 ? `> ${reviewed.length} clip(s) queued for manual review — not skipped automatically` : '',
+    ].filter(Boolean);
+    let i = 0;
+    const step = () => {
+      if (i < lines.length) {
+        setScanLog(prev => [...prev, lines[i++]]);
+        setProgress(Math.round((i / lines.length) * 100));
+        if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+        setTimeout(step, 110);
+      } else {
+        setScanning(false); setScanDone(true);
+        // Auto-skip ONLY hard-flagged clips (duration/motion) — review clips stay accessible
+        flagged.forEach(q => { if (!skipSet.has(q.id)) onSkipToggle(q.id); });
+      }
+    };
+    setTimeout(step, 80);
+  };
+
+  return (
+    <div style={{ background: P.panel, borderRadius:10, border:`1px solid ${P.border}`, overflow:'hidden', marginBottom:12 }}>
+      {/* Header */}
+      <div style={{ padding:'9px 14px', borderBottom:`1px solid ${P.border}`,
+        background: scanDone ? (flagged.length > 0 ? P.error+'0a' : P.success+'0a') : P.bg,
+        display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+          <span style={{ fontSize:13, fontWeight:700, color: P.text, fontFamily:'-apple-system, sans-serif' }}>⚡ Pre-Flight Scan</span>
+          {scanDone && (
+            <div style={{ display:'flex', gap:5 }}>
+              {flagged.length > 0 && (
+                <Tag style={{ background:P.error+'22', color:P.error }}>{flagged.length} skip</Tag>
+              )}
+              {reviewed.length > 0 && (
+                <Tag style={{ background:P.warning+'22', color:P.warning }}>{reviewed.length} review</Tag>
+              )}
+              {flagged.length === 0 && reviewed.length === 0 && (
+                <Tag style={{ background:P.success+'22', color:P.success }}>all clear</Tag>
+              )}
+            </div>
+          )}
+        </div>
+        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+          {scanDone && parseFloat(savedCost) > 0 && (
+            <div style={{ fontSize:10, color:P.success, fontFamily:'Space Mono, monospace',
+              background:P.success+'11', border:`1px solid ${P.success}33`, borderRadius:4, padding:'3px 8px' }}>
+              saving ${savedCost} / run
+            </div>
+          )}
+          <Btn primary small onClick={runScan} disabled={scanning}>
+            {scanning ? '⏳ Scanning…' : scanDone ? '↺ Re-scan' : '▶ Run Scan'}
+          </Btn>
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      {(scanning || scanDone) && (
+        <div style={{ height:3, background:P.border }}>
+          <div style={{ width:`${progress}%`, height:'100%', transition:'width 0.1s',
+            background: scanning ? P.warning : (flagged.length>0 ? P.error : P.success) }} />
+        </div>
+      )}
+
+      {/* Results table */}
+      {scanDone && (
+        <div style={{ overflowX:'auto' }}>
+          <table style={{ width:'100%', borderCollapse:'collapse', fontFamily:'-apple-system, sans-serif', fontSize:11 }}>
+            <thead>
+              <tr style={{ borderBottom:`1px solid ${P.border}` }}>
+                {['Skip','File','Size','Duration','Motion','Black%','Audio','Verdict'].map(h => (
+                  <th key={h} style={{ padding:'5px 10px', textAlign:'left', fontSize:9,
+                    color:P.muted, fontFamily:'Space Mono, monospace', fontWeight:400, whiteSpace:'nowrap' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {queue.map(q => {
+                const pf = q.preflight || {};
+                const isFlagged = pf.verdict === 'flag';
+                const isSkipped = skipSet.has(q.id);
+                return (
+                  <tr key={q.id} style={{ borderBottom:`1px solid ${P.border}`,
+                    background: isSkipped ? P.error+'08' : isFlagged ? P.error+'04' : 'transparent',
+                    opacity: isSkipped ? 0.6 : 1 }}>
+                    <td style={{ padding:'6px 10px' }}>
+                      <input type="checkbox" checked={isSkipped} onChange={() => onSkipToggle(q.id)}
+                        style={{ accentColor:P.error, cursor:'pointer' }} />
+                    </td>
+                    <td style={{ padding:'6px 10px', fontFamily:'Space Mono, monospace', fontSize:9,
+                      color:P.textSub, maxWidth:150, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                      {q.origFile}
+                    </td>
+                    <td style={{ padding:'6px 10px', fontFamily:'Space Mono, monospace', fontSize:9, color:P.text }}>
+                      {q.size}
+                    </td>
+                    <td style={{ padding:'6px 10px' }}>
+                      <span style={{ fontFamily:'Space Mono, monospace', fontSize:9,
+                        color:(pf.durationSecs||0)<3 ? P.error : P.text }}>
+                        {pf.durationSecs ?? '?'}s
+                      </span>
+                    </td>
+                    <td style={{ padding:'6px 10px' }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:5 }}>
+                        <div style={{ width:38, height:4, background:P.border, borderRadius:3 }}>
+                          <div style={{ width:`${pf.motionScore||0}%`, height:'100%', borderRadius:3,
+                            background:(pf.motionScore||0)<20?P.error:(pf.motionScore||0)<50?P.warning:P.success }} />
+                        </div>
+                        <span style={{ fontSize:9, fontFamily:'Space Mono, monospace', color:P.muted }}>
+                          {pf.motionScore??0}
+                        </span>
+                      </div>
+                    </td>
+                    <td style={{ padding:'6px 10px' }}>
+                      <span style={{ fontFamily:'Space Mono, monospace', fontSize:9,
+                        color:(pf.blackFramePct||0)>50?P.error:P.muted }}>
+                        {pf.blackFramePct??0}%
+                      </span>
+                    </td>
+                    <td style={{ padding:'6px 10px' }}>
+                      <span style={{ fontSize:11, color:pf.hasAudio?P.success:P.error }}>
+                        {pf.hasAudio ? '♪' : '✕'}
+                      </span>
+                    </td>
+                    <td style={{ padding:'6px 10px 6px 6px' }}>
+                      <Tag style={{ background:(verdictColor[pf.verdict]||P.muted)+'22',
+                        color:verdictColor[pf.verdict]||P.muted }}>
+                        {verdictLabel[pf.verdict]||'—'}
+                      </Tag>
+                      {pf.flagReasons && pf.flagReasons.length > 0 && (
+                        <div style={{ fontSize:8, color:P.error, marginTop:2,
+                          fontFamily:'Space Mono, monospace', lineHeight:1.6 }}>
+                          {pf.flagReasons.map((r,i)=><div key={i}>{r}</div>)}
+                        </div>
+                      )}
+                      {pf.reviewReasons && pf.reviewReasons.length > 0 && (
+                        <div style={{ fontSize:8, color:P.warning, marginTop:2,
+                          fontFamily:'Space Mono, monospace', lineHeight:1.6 }}>
+                          {pf.reviewReasons.map((r,i)=><div key={i}>↳ {r}</div>)}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {/* Cost summary bar */}
+          <div style={{ padding:'7px 14px', borderTop:`1px solid ${P.border}`,
+            display:'flex', gap:16, alignItems:'center', background:P.bg,
+            fontSize:10, fontFamily:'Space Mono, monospace', flexWrap:'wrap' }}>
+            <span style={{ color:P.muted }}>FULL QUEUE: <strong style={{ color:P.text }}>${totalCost}</strong></span>
+            <span style={{ color:P.muted }}>SKIPPED: <strong style={{ color:P.error }}>${savedCost}</strong></span>
+            <span style={{ color:P.muted }}>NET VORTEX: <strong style={{ color:P.success }}>${netCost}</strong></span>
+            <span style={{ marginLeft:'auto', color:P.muted }}>{queue.length-skipSet.size} of {queue.length} clips → API</span>
+          </div>
+        </div>
+      )}
+
+      {/* Scan terminal log */}
+      {(scanning || scanDone) && (
+        <div ref={logRef} style={{ maxHeight:88, overflowY:'auto', background:'#0d0d0f', padding:'7px 12px', fontFamily:'Space Mono, monospace' }}>
+          {scanLog.map((line,i) => (
+            <div key={i} style={{ fontSize:8.5, lineHeight:1.8,
+              color: line.includes('FLAGGED')||line.includes('⚠') ? '#ff6b6b'
+                : line.includes('PASS')||line.includes('✓') ? '#7ae'
+                : line.includes('saving')||line.includes('complete') ? '#c9a84c'
+                : '#7a9' }}>
+              {line}
+            </div>
+          ))}
+          {scanning && <div style={{ fontSize:8.5, color:'#555' }}>█</div>}
+        </div>
+      )}
+
+      {!scanDone && !scanning && (
+        <div style={{ padding:'10px 14px', fontSize:11, color:P.muted,
+          fontFamily:'-apple-system, sans-serif', lineHeight:1.7 }}>
+          Runs <strong style={{ color:P.text }}>ffprobe</strong> on each clip before Vortex API submission.
+          {' '}<span style={{ color:P.error }}>Auto-skip</span>: duration &lt; 3s or zero motion.
+          {' '}<span style={{ color:P.warning }}>Review</span>: high black-frame ratio — partial footage stays accessible, not auto-omitted.
+          {' '}Audio absence and file size are <strong style={{ color:P.text }}>not flagging criteria</strong> (legacy footage &amp; B-roll exempt).
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Import View ───────────────────────────────────────────────────────────────
 function ImportView({ queue, log, mode }) {
   const P = SACC_PALETTE;
   const [dragOver, setDragOver]   = React.useState(false);
@@ -11,7 +248,14 @@ function ImportView({ queue, log, mode }) {
   const [skuInput, setSkuInput]   = React.useState('');
   const [skuResult, setSkuResult] = React.useState(null);
   const [skuErr, setSkuErr]       = React.useState(false);
+  const [skipSet,  setSkipSet]    = React.useState(new Set());
   const logRef = React.useRef(null);
+
+  const onSkipToggle = (id) => setSkipSet(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
 
   const item      = queue.find(q => q.id === selectedQ);
   const locations = SACC_DATA.locations;
@@ -198,8 +442,14 @@ function ImportView({ queue, log, mode }) {
         </div>
 
         <div style={{ padding:'10px', borderTop:`1px solid ${P.border}` }}>
+          {skipSet.size > 0 && (
+            <div style={{ fontSize:9, color:P.muted, fontFamily:'Space Mono, monospace',
+              textAlign:'center', marginBottom:5 }}>
+              {skipSet.size} clip{skipSet.size>1?'s':''} skipped by Pre-Flight
+            </div>
+          )}
           <Btn primary onClick={runScript} disabled={streaming} style={{ width:'100%' }}>
-            {streaming ? '⚡ Running…' : '⚡ run_vibe_renamer()'}
+            {streaming ? '⚡ Running…' : `⚡ run_vibe_renamer() (${queue.length - skipSet.size} clips)`}
           </Btn>
         </div>
       </div>
@@ -220,6 +470,9 @@ function ImportView({ queue, log, mode }) {
         </div>
 
         <div style={{ flex:1, padding:'14px 16px', display:'flex', flexDirection:'column', gap:12 }}>
+
+          {/* Pre-Flight Scan — runs before Vortex API submission */}
+          <PreFlightPanel queue={queue} onSkipToggle={onSkipToggle} skipSet={skipSet} />
 
           {/* Whitelist match card */}
           {whitelistMatch && (

@@ -79,11 +79,46 @@ const SACC_DATA = {
   ],
 
   // Import queue — awaiting run_vibe_renamer()
+  // preflight: ffprobe metadata used by Pre-Flight Scan to filter before Vortex API
   queue: [
-    { id:"q1", origFile:"AJ1_chicago_raw_iphone.mov",    size:"3.1 GB", progress:100, status:"done",       sku:"555088-101", creationTime:"2025-01-11T10:22:00Z", suggestedLoc:"FLM", camModel:"iPhone15ProMax" },
-    { id:"q2", origFile:"jordan3_fire_red_4k_shoot.mov", size:"2.4 GB", progress:62,  status:"processing", sku:null,         creationTime:"2025-01-11T11:04:00Z", suggestedLoc:"MAM", camModel:"iPhone14Pro"    },
-    { id:"q3", origFile:"unknown_jordan_footage_03.mov", size:"1.9 GB", progress:0,   status:"queued",     sku:null,         creationTime:null,                   suggestedLoc:null,  camModel:null             },
-    { id:"q4", origFile:"nb574_grey_day_raw.mp4",        size:"870 MB", progress:0,   status:"queued",     sku:null,         creationTime:null,                   suggestedLoc:null,  camModel:null             },
+    {
+      id:"q1", origFile:"AJ1_chicago_raw_iphone.mov",    size:"3.1 GB", progress:100, status:"done",
+      sku:"555088-101", creationTime:"2025-01-11T10:22:00Z", suggestedLoc:"FLM", camModel:"iPhone15ProMax",
+      preflight: { sizeBytes:3328*1024*1024, durationSecs:187, fps:60, hasAudio:true,  blackFramePct:1,  motionScore:91, resolution:"4K",   verdict:"pass" }
+    },
+    {
+      id:"q2", origFile:"jordan3_fire_red_4k_shoot.mov", size:"2.4 GB", progress:62,  status:"processing",
+      sku:null, creationTime:"2025-01-11T11:04:00Z", suggestedLoc:"MAM", camModel:"iPhone14Pro",
+      preflight: { sizeBytes:2458*1024*1024, durationSecs:143, fps:30, hasAudio:true,  blackFramePct:4,  motionScore:78, resolution:"4K",   verdict:"pass" }
+    },
+    {
+      id:"q3", origFile:"unknown_jordan_footage_03.mov", size:"1.9 GB", progress:0,   status:"queued",
+      sku:null, creationTime:null, suggestedLoc:null, camModel:null,
+      // flag: duration only — black frames and audio absence no longer trigger auto-skip
+      preflight: { sizeBytes:1966*1024*1024, durationSecs:2,   fps:30, hasAudio:false, blackFramePct:88, motionScore:3,  resolution:"1080p", verdict:"flag",
+        flagReasons:["duration < 3s — clip too short for reliable identification"],
+        reviewReasons:["88% black frames — verify coverage, may be partial footage"] }
+    },
+    {
+      id:"q4", origFile:"nb574_grey_day_raw.mp4",        size:"870 MB", progress:0,   status:"queued",
+      sku:null, creationTime:null, suggestedLoc:null, camModel:null,
+      preflight: { sizeBytes:870*1024*1024,  durationSecs:52,  fps:24, hasAudio:true,  blackFramePct:2,  motionScore:66, resolution:"1080p", verdict:"pass" }
+    },
+    {
+      id:"q5", origFile:"test_clip_blank.mov",           size:"12 MB",  progress:0,   status:"queued",
+      sku:null, creationTime:null, suggestedLoc:null, camModel:null,
+      // flag: duration + zero motion only — file size and audio absence removed as criteria
+      preflight: { sizeBytes:12*1024*1024,   durationSecs:1,   fps:30, hasAudio:false, blackFramePct:99, motionScore:0,  resolution:"720p",  verdict:"flag",
+        flagReasons:["duration < 3s — clip too short","motion score 0 — no detectable movement"],
+        reviewReasons:["99% black frames — may be lens cap or dead footage"] }
+    },
+    {
+      id:"q6", origFile:"broll_hallway_legacy.mov",      size:"38 MB",  progress:0,   status:"queued",
+      sku:null, creationTime:null, suggestedLoc:null, camModel:null,
+      // review only: high black frames but valid duration — legacy B-roll, accessible but flagged for human review
+      preflight: { sizeBytes:38*1024*1024,   durationSecs:34,  fps:24, hasAudio:false, blackFramePct:61, motionScore:28, resolution:"720p",  verdict:"review",
+        reviewReasons:["61% black frames — partial footage, review before API submission"] }
+    },
   ],
 
   // Generator stream log (mirrors Python yield output)
