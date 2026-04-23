@@ -395,4 +395,144 @@ function DetailPanel({ sneaker, mode, onClose }) {
   );
 }
 
-Object.assign(window, { SidebarNav, DetailPanel, Btn, Tag, SketchImg, SmartFilter, StatsWidget, SACC_PALETTE });
+// ── Temporal Search Engine ───────────────────────────────────────────────────
+// Queries sneakers by SKU, model name, colorway, date, location, or tag
+// Returns matched entries with their video timestamps for direct navigation
+
+function searchSneakers(sneakers, rawQuery) {
+  if (!rawQuery || !rawQuery.trim()) return [];
+  const q = rawQuery.trim().toLowerCase();
+
+  return sneakers
+    .map(s => {
+      const fields = [
+        s.sku, s.name, s.colorway, s.silhouette,
+        s.brand, s.loc,
+        SACC_DATA.locations[s.loc]?.name,
+        SACC_DATA.locations[s.loc]?.type,
+        SACC_DATA.locations[s.loc]?.region,
+        s.release,                         // full date: "2022-04-09"
+        s.release?.slice(0,7),             // year-month: "2022-04"
+        s.release?.slice(0,4),             // year only: "2022"
+        ...(s.tags || []),
+      ].map(f => (f || '').toLowerCase());
+
+      const score = fields.reduce((acc, f) => {
+        if (f === q) return acc + 10;           // exact match
+        if (f.startsWith(q)) return acc + 5;   // prefix match
+        if (f.includes(q)) return acc + 1;     // substring match
+        return acc;
+      }, 0);
+
+      return { ...s, _score: score };
+    })
+    .filter(s => s._score > 0)
+    .sort((a, b) => b._score - a._score);
+}
+
+// ── Search Bar component ─────────────────────────────────────────────────────
+function SearchBar({ value, onChange, resultCount, onClear }) {
+  const P = SACC_PALETTE;
+  const inputRef = React.useRef(null);
+  const hasQuery = value && value.trim().length > 0;
+
+  // ⌘F shortcut to focus
+  React.useEffect(() => {
+    const handler = e => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+        e.preventDefault();
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:6,
+      background: P.bg, border:`1.5px solid ${hasQuery ? P.accent : P.border}`,
+      borderRadius:7, padding:'4px 10px', minWidth:220, transition:'border 0.15s' }}>
+      <span style={{ fontSize:12, color: P.muted, flexShrink:0 }}>⌕</span>
+      <input
+        ref={inputRef}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder="SKU · model · date · location…"
+        style={{ border:'none', outline:'none', background:'transparent',
+          fontSize:12, color:P.text, fontFamily:'-apple-system, sans-serif',
+          width:'100%', minWidth:0 }}
+        onKeyDown={e => e.key === 'Escape' && onClear()}
+      />
+      {hasQuery && (
+        <>
+          <span style={{ fontSize:10, color:P.accent, fontFamily:'Space Mono, monospace',
+            fontWeight:700, flexShrink:0, whiteSpace:'nowrap' }}>
+            {resultCount} hit{resultCount !== 1 ? 's' : ''}
+          </span>
+          <button onClick={onClear}
+            style={{ border:'none', background:'transparent', cursor:'pointer',
+              color:P.muted, fontSize:14, lineHeight:1, padding:0, flexShrink:0 }}>×</button>
+        </>
+      )}
+      {!hasQuery && (
+        <kbd style={{ fontSize:9, color:P.muted, background:P.border, borderRadius:3,
+          padding:'1px 5px', fontFamily:'Space Mono, monospace', flexShrink:0 }}>⌘F</kbd>
+      )}
+    </div>
+  );
+}
+
+// ── Timestamp Results Bar ────────────────────────────────────────────────────
+// Shows above the grid/list when a search is active — each chip jumps to that entry
+function TimestampResultsBar({ results, selectedId, onSelect }) {
+  const P = SACC_PALETTE;
+  if (!results.length) return (
+    <div style={{ padding:'8px 14px', background:P.panel, borderBottom:`1px solid ${P.border}`,
+      fontSize:11, color:P.muted, fontFamily:'-apple-system, sans-serif' }}>
+      No matches found.
+    </div>
+  );
+
+  return (
+    <div style={{ padding:'7px 14px', background:P.panel, borderBottom:`1px solid ${P.border}`,
+      display:'flex', alignItems:'center', gap:6, overflowX:'auto', flexWrap:'nowrap' }}>
+      <span style={{ fontSize:9, color:P.muted, fontFamily:'Space Mono, monospace',
+        flexShrink:0, marginRight:2 }}>TIMESTAMPS</span>
+      {results.map(s => {
+        const loc = SACC_DATA.locations[s.loc];
+        const isSelected = s.id === selectedId;
+        return (
+          <div key={s.id} onClick={() => onSelect(s.id)}
+            style={{ display:'inline-flex', alignItems:'center', gap:5, flexShrink:0,
+              background: isSelected ? P.accent : P.bg,
+              border:`1px solid ${isSelected ? P.accent : P.border}`,
+              borderRadius:6, padding:'4px 9px', cursor:'pointer', transition:'all 0.12s' }}>
+            <span style={{ fontSize:11, fontWeight:700,
+              fontFamily:'Space Mono, monospace',
+              color: isSelected ? '#fff' : P.accent }}>
+              ⏱ {s.ts}
+            </span>
+            <span style={{ fontSize:10,
+              color: isSelected ? 'rgba(255,255,255,0.85)' : P.text,
+              fontFamily:'-apple-system, sans-serif', maxWidth:130,
+              overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+              {s.name}
+            </span>
+            {loc && (
+              <span style={{ fontSize:9, fontFamily:'Space Mono, monospace',
+                color: isSelected ? 'rgba(255,255,255,0.6)' : P.muted }}>
+                {s.loc}
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+Object.assign(window, {
+  SidebarNav, DetailPanel, Btn, Tag, SketchImg, SmartFilter, StatsWidget, SACC_PALETTE,
+  SearchBar, TimestampResultsBar, searchSneakers,
+});

@@ -1,18 +1,25 @@
 // SACC — Timeline / List View (v2.0)
-// + Bulk-select · Batch export · Real LOC-TYPE filenames
+// + Bulk-select · Batch export · Real LOC-TYPE filenames · Temporal search
 // Exports: TimelineView
 
-function TimelineView({ sneakers, selectedId, onSelect, filters, setFilters }) {
+function TimelineView({ sneakers, selectedId, onSelect, filters, setFilters, searchQuery, setSearchQuery }) {
   const P = SACC_PALETTE;
   const [selected, setSelected] = React.useState(new Set()); // bulk-select ids
   const [exportOpen, setExportOpen] = React.useState(false);
 
-  const brands   = ['All', ...new Set(sneakers.map(s => (s.brand || 'Jordan Brand') || 'Jordan Brand'))];
+  // Temporal search — runs against full dataset
+  const searchResults = React.useMemo(
+    () => searchSneakers(sneakers, searchQuery),
+    [sneakers, searchQuery]
+  );
+  const isSearching = searchQuery && searchQuery.trim().length > 0;
+
+  const brands   = ['All', ...new Set(sneakers.map(s => (s.brand || 'Jordan Brand')))];
   const statuses = ['All', 'synced', 'pending', 'error'];
   const sorts    = ['Date ↓', 'Date ↑', 'Price ↓', 'Price ↑', 'Name A–Z'];
 
-  const filtered = sneakers.filter(s => {
-    if (filter(s.brand || 'Jordan Brand')  !== 'All' && (s.brand || 'Jordan Brand')  !== filter(s.brand || 'Jordan Brand'))  return false;
+  const dropdownFiltered = sneakers.filter(s => {
+    if (filters.brand !== 'All' && (s.brand || 'Jordan Brand') !== filters.brand) return false;
     if (filters.status !== 'All' && s.status !== filters.status) return false;
     return true;
   }).sort((a, b) => {
@@ -24,6 +31,8 @@ function TimelineView({ sneakers, selectedId, onSelect, filters, setFilters }) {
       default:        return b.release.localeCompare(a.release);
     }
   });
+
+  const filtered = isSearching ? searchResults : dropdownFiltered;
 
   const allChecked = filtered.length > 0 && filtered.every(s => selected.has(s.id));
   const toggleAll  = () => {
@@ -54,9 +63,23 @@ function TimelineView({ sneakers, selectedId, onSelect, filters, setFilters }) {
       {/* ── Toolbar ── */}
       <div style={{ padding:'8px 14px', borderBottom:`1px solid ${P.border}`,
         background: P.panel, display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
-        <SmartFilter label="Brand:"  options={brands}   value={filter(s.brand || 'Jordan Brand')}  onChange={v => setFilters(f => ({...f, brand: v}))} />
-        <SmartFilter label="Status:" options={statuses} value={filters.status} onChange={v => setFilters(f => ({...f, status: v}))} />
-        <SmartFilter label="Sort:"   options={sorts}    value={filters.sort}   onChange={v => setFilters(f => ({...f, sort: v}))} />
+
+        {/* Temporal search bar */}
+        <SearchBar
+          value={searchQuery}
+          onChange={setSearchQuery}
+          resultCount={searchResults.length}
+          onClear={() => setSearchQuery('')}
+        />
+
+        {/* Dropdown filters hidden while searching */}
+        {!isSearching && (
+          <>
+            <SmartFilter label="Brand:"  options={brands}   value={filters.brand}  onChange={v => setFilters(f => ({...f, brand: v}))} />
+            <SmartFilter label="Status:" options={statuses} value={filters.status} onChange={v => setFilters(f => ({...f, status: v}))} />
+            <SmartFilter label="Sort:"   options={sorts}    value={filters.sort}   onChange={v => setFilters(f => ({...f, sort: v}))} />
+          </>
+        )}
 
         {/* Bulk action bar — appears when items selected */}
         {selCount > 0 ? (
@@ -134,9 +157,18 @@ function TimelineView({ sneakers, selectedId, onSelect, filters, setFilters }) {
           {secsToTs(totalSecs)}
         </span>
         <span style={{ fontSize:10, color: P.muted, fontFamily:'Space Mono, monospace', flexShrink:0 }}>
-          {filtered.length} entries
+          {filtered.length} {isSearching ? 'results' : 'entries'}
         </span>
       </div>
+
+      {/* Timestamp results bar — active during search */}
+      {isSearching && (
+        <TimestampResultsBar
+          results={searchResults}
+          selectedId={selectedId}
+          onSelect={onSelect}
+        />
+      )}
 
       {/* ── Table ── */}
       <div style={{ flex:1, overflowY:'auto' }}

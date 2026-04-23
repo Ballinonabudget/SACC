@@ -1,15 +1,24 @@
 // SACC — Gallery View
+// + Temporal search: SKU · model · colorway · date · location · tag → timestamps
 // Exports: GalleryView
 
-function GalleryView({ sneakers, selectedId, onSelect, filters, setFilters, mode }) {
+function GalleryView({ sneakers, selectedId, onSelect, filters, setFilters, mode, searchQuery, setSearchQuery }) {
   const P = SACC_PALETTE;
+
+  // Search — runs against full sneaker dataset, bypasses dropdown filters
+  const searchResults = React.useMemo(
+    () => searchSneakers(sneakers, searchQuery),
+    [sneakers, searchQuery]
+  );
+  const isSearching = searchQuery && searchQuery.trim().length > 0;
+  const displayList = isSearching ? searchResults : null; // null = use dropdown filters
 
   const brands = ['All', ...new Set(sneakers.map(s => s.brand || s.silhouette?.split(' ')[0] || 'Unknown'))];
   const years  = ['All', ...new Set(sneakers.map(s => s.release.slice(0,4))).values()].sort().reverse();
   const sorts  = ['Date ↓', 'Date ↑', 'Price ↓', 'Price ↑', 'Name A–Z'];
   const statuses = ['All', 'synced', 'pending', 'error'];
 
-  const filtered = sneakers.filter(s => {
+  const dropdownFiltered = sneakers.filter(s => {
     if (filters.brand !== 'All' && s.brand !== filters.brand) return false;
     if (filters.year  !== 'All' && !s.release.startsWith(filters.year)) return false;
     if (filters.status !== 'All' && s.status !== filters.status) return false;
@@ -24,6 +33,9 @@ function GalleryView({ sneakers, selectedId, onSelect, filters, setFilters, mode
     }
   });
 
+  // When searching, bypass dropdown filters and use search results directly
+  const filtered = isSearching ? searchResults : dropdownFiltered;
+
   const starColor = s => s.rating === 5 ? P.accent : P.muted;
 
   return (
@@ -33,23 +45,46 @@ function GalleryView({ sneakers, selectedId, onSelect, filters, setFilters, mode
       <div style={{ padding: '8px 14px', borderBottom: `1px solid ${P.border}`,
         background: P.panel, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
 
-        {/* Smart Filters */}
-        <SmartFilter label="Brand:" options={brands} value={filters.brand} onChange={v => setFilters(f => ({...f, brand: v}))} />
-        <SmartFilter label="Year:" options={years} value={filters.year} onChange={v => setFilters(f => ({...f, year: v}))} />
-        <SmartFilter label="Status:" options={statuses} value={filters.status} onChange={v => setFilters(f => ({...f, status: v}))} />
-        <SmartFilter label="Sort:" options={sorts} value={filters.sort} onChange={v => setFilters(f => ({...f, sort: v}))} />
+        {/* Search bar — takes priority over dropdown filters when active */}
+        <SearchBar
+          value={searchQuery}
+          onChange={setSearchQuery}
+          resultCount={searchResults.length}
+          onClear={() => setSearchQuery('')}
+        />
+
+        {/* Dropdown filters — dimmed when search is active */}
+        {!isSearching && (
+          <>
+            <SmartFilter label="Brand:" options={brands} value={filters.brand} onChange={v => setFilters(f => ({...f, brand: v}))} />
+            <SmartFilter label="Year:" options={years} value={filters.year} onChange={v => setFilters(f => ({...f, year: v}))} />
+            <SmartFilter label="Status:" options={statuses} value={filters.status} onChange={v => setFilters(f => ({...f, status: v}))} />
+            <SmartFilter label="Sort:" options={sorts} value={filters.sort} onChange={v => setFilters(f => ({...f, sort: v}))} />
+          </>
+        )}
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
           <StatsWidget sneakers={sneakers} />
         </div>
       </div>
 
+      {/* Timestamp results bar — shown only during active search */}
+      {isSearching && (
+        <TimestampResultsBar
+          results={searchResults}
+          selectedId={selectedId}
+          onSelect={onSelect}
+        />
+      )}
+
       {/* Count bar */}
       <div style={{ padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ fontSize: 11, color: P.muted, fontFamily: 'Space Mono, monospace' }}>
-          {filtered.length} of {sneakers.length} entries
+          {isSearching
+            ? `${filtered.length} search result${filtered.length !== 1 ? 's' : ''}`
+            : `${filtered.length} of ${sneakers.length} entries`}
         </span>
-        {Object.entries(filters).some(([k, v]) => k !== 'sort' && v !== 'All') && (
+        {!isSearching && Object.entries(filters).some(([k, v]) => k !== 'sort' && v !== 'All') && (
           <span onClick={() => setFilters({ brand: 'All', year: 'All', status: 'All', sort: 'Date ↓' })}
             style={{ fontSize: 10, color: P.accent, cursor: 'pointer', fontFamily: '-apple-system, sans-serif' }}>
             Clear filters ×

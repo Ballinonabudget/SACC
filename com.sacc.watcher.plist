@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.sacc.watcher.plist — launchd agent for SACC folder-watch daemon
+
+  Install:
+    cp /Users/miniman/SACC/com.sacc.watcher.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.sacc.watcher.plist
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.sacc.watcher.plist
+    rm ~/Library/LaunchAgents/com.sacc.watcher.plist
+
+  Edit --loc and --id below to match the current shoot location and shoe.
+  Restart launchd agent after each edit:
+    launchctl unload ~/Library/LaunchAgents/com.sacc.watcher.plist
+    launchctl load   ~/Library/LaunchAgents/com.sacc.watcher.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sacc.watcher</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/miniman/SACC/sacc_watcher.py</string>
+        <string>--inbox</string>
+        <string>/Volumes/Team Bank 12/SACC/Inbox</string>
+        <string>--root</string>
+        <string>/Volumes/Team Bank 12/SACC</string>
+        <string>--loc</string>
+        <string>FLM</string>
+        <string>--id</string>
+        <string>Air Jordan 1 Chicago</string>
+    </array>
+
+    <!-- Run on login, restart if it crashes -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Wait for Synology volume to mount before starting -->
+    <key>WatchPaths</key>
+    <array>
+        <string>/Volumes/Team Bank 12</string>
+    </array>
+
+    <!-- Logs -->
+    <key>StandardOutPath</key>
+    <string>/Users/miniman/SACC/sacc_launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/miniman/SACC/sacc_launchd.err</string>
+
+    <!-- Environment -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>

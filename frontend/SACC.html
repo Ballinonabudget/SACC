@@ -145,6 +145,7 @@ function App() {
   const [accent, setAccent]       = useState(saved.accent || TWEAK_DEFAULTS.accent);
   const [selectedId, setSelectedId] = useState(saved.selectedId || null);
   const [filters, setFilters]     = useState({ brand: 'All', year: 'All', status: 'All', sort: 'Date ↓' });
+  const [searchQuery, setSearchQuery] = useState('');
   const [cmdOpen, setCmdOpen]     = useState(false);
   const [cmdQuery, setCmdQuery]   = useState('');
   const [cmdIdx, setCmdIdx]       = useState(0);
@@ -395,12 +396,14 @@ function App() {
           {view === 'gallery' && (
             <GalleryView sneakers={SACC_DATA.sneakers} selectedId={selectedId}
               onSelect={id => setSelectedId(id === selectedId ? null : id)}
-              filters={filters} setFilters={setFilters} mode={mode} />
+              filters={filters} setFilters={setFilters} mode={mode}
+              searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
           )}
           {view === 'timeline' && (
             <TimelineView sneakers={SACC_DATA.sneakers} selectedId={selectedId}
               onSelect={id => setSelectedId(id === selectedId ? null : id)}
-              filters={filters} setFilters={setFilters} mode={mode} />
+              filters={filters} setFilters={setFilters} mode={mode}
+              searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
           )}
           {view === 'import' && mode === 'pro' && (
             <ImportView queue={SACC_DATA.queue} log={SACC_DATA.log} mode={mode} />
