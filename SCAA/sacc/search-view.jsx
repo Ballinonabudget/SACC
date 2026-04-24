@@ -1,9 +1,12 @@
-// SACC — Search & Index View (v3.0)
+// SACC — Search & Index View (v4.0)
 // [Custom Name] now resolved by AI visual/audio analysis — GPS rescinded.
 // New fields: loc_source, loc_confidence, loc_visual, loc_audio
+// v4.0: live /api/db/search when activeFolder is set; static SACC_DATA fallback otherwise
 // Exports: SearchView
 
-function SearchView({ sneakers, whitelist, locations, mode, accent, onSelectSneaker }) {
+const API_BASE = 'http://localhost:5174';
+
+function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder, onSelectSneaker }) {
   const P = SACC_PALETTE;
 
   const [query,       setQuery]       = React.useState('');
@@ -14,6 +17,59 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, onSelectSnea
   const [sortBy,      setSortBy]      = React.useState('release');
   const [sortDir,     setSortDir]     = React.useState('desc');
   const [selected,    setSelected]    = React.useState(null);
+
+  // ── Live API search state ─────────────────────────────────────────────────────
+  const [liveResults,  setLiveResults]  = React.useState(null);  // null = not loaded yet
+  const [liveLoading,  setLiveLoading]  = React.useState(false);
+  const [liveError,    setLiveError]    = React.useState('');
+  const [liveTotal,    setLiveTotal]    = React.useState(0);
+  const debounceRef = React.useRef(null);
+
+  // Fire API search whenever query or activeFolder changes (debounced 300ms)
+  React.useEffect(() => {
+    if (!activeFolder) { setLiveResults(null); return; }
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      setLiveLoading(true); setLiveError('');
+      try {
+        const params = new URLSearchParams({ path: activeFolder, q: query, limit: 200 });
+        const res  = await fetch(`${API_BASE}/api/db/search?${params}`);
+        const data = await res.json();
+        if (data.error) { setLiveError(data.error); setLiveResults([]); }
+        else {
+          // Normalize API record shape → same fields SearchView table expects
+          setLiveResults((data.results || []).map(r => ({
+            id:             r.stem,
+            name:           r.model   || r.stem,
+            sku:            r.sku     || '',
+            colorway:       r.colorway || '',
+            release:        r.shoot_date || r.analysed_at?.slice(0,10) || '',
+            retail:         r.price   || 0,
+            loc:            r.loc_code || '',
+            loc_source:     r.loc_source || 'unknown',
+            loc_confidence: r.loc_confidence || '',
+            loc_visual:     r.loc_visual || '',
+            loc_audio:      r.loc_audio  || '',
+            status:         r.proxy_deleted ? 'synced' : 'pending',
+            camModel:       r.cam_model  || '',
+            origFile:       r.original_file || r.stem,
+            ext:            '.mp4',
+            tags:           [],
+            ts:             r.created_at || '',
+            _live:          true,  // flag: came from API
+          })));
+          setLiveTotal(data.total || 0);
+        }
+      } catch (err) {
+        setLiveError(`API unreachable — ${err.message}`);
+        setLiveResults([]);
+      } finally {
+        setLiveLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(debounceRef.current);
+  }, [query, activeFolder]);
+
   const inputRef = React.useRef(null);
 
   React.useEffect(() => { setTimeout(() => inputRef.current?.focus(), 80); }, []);
@@ -74,23 +130,33 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, onSelectSnea
   // ── Derived data ──────────────────────────────────────────────────────────────
   const allLocs = ['All', ...Object.keys(locations)];
 
+  // Source pool: live API results when folder is set, static sneakers otherwise
+  const sourcePool = React.useMemo(() => {
+    if (activeFolder && liveResults !== null) return liveResults;
+    return sneakers;
+  }, [activeFolder, liveResults, sneakers]);
+
   const archiveResults = React.useMemo(() => {
     if (scope === 'whitelist') return [];
     const q = query.toLowerCase().trim();
-    let rows = sneakers.filter(s => {
-      if (!q) return true;
-      return (
-        s.name.toLowerCase().includes(q)          ||
-        s.sku.toLowerCase().includes(q)            ||
-        s.colorway.toLowerCase().includes(q)       ||
-        s.silhouette.toLowerCase().includes(q)     ||
-        s.loc.toLowerCase().includes(q)            ||
-        (s.loc_visual  || '').toLowerCase().includes(q) ||
-        (s.loc_audio   || '').toLowerCase().includes(q) ||
-        (s.tags || []).join(' ').toLowerCase().includes(q) ||
-        s.release.includes(q)
-      );
-    });
+    // When using live results the API already filtered by query — skip JS text filter
+    let rows = (activeFolder && liveResults !== null)
+      ? sourcePool   // API already ran FTS5 search
+      : sourcePool.filter(s => {
+          if (!q) return true;
+          return (
+            s.name.toLowerCase().includes(q)          ||
+            s.sku.toLowerCase().includes(q)            ||
+            s.colorway.toLowerCase().includes(q)       ||
+            (s.silhouette || '').toLowerCase().includes(q) ||
+            s.loc.toLowerCase().includes(q)            ||
+            (s.loc_visual  || '').toLowerCase().includes(q) ||
+            (s.loc_audio   || '').toLowerCase().includes(q) ||
+            (s.tags || []).join(' ').toLowerCase().includes(q) ||
+            s.release.includes(q)
+          );
+        });
+
     if (statusFilter !== 'All') rows = rows.filter(s => s.status === statusFilter);
     if (locFilter    !== 'All') rows = rows.filter(s => s.loc    === locFilter);
     if (locSrcFilter !== 'All') rows = rows.filter(s => s.loc_source === locSrcFilter);
@@ -106,7 +172,7 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, onSelectSnea
       return sortDir === 'desc' ? -cmp : cmp;
     });
     return rows;
-  }, [query, scope, statusFilter, locFilter, locSrcFilter, sortBy, sortDir, sneakers]);
+  }, [query, scope, statusFilter, locFilter, locSrcFilter, sortBy, sortDir, sourcePool, activeFolder, liveResults]);
 
   const whitelistResults = React.useMemo(() => {
     if (scope === 'archive') return [];
@@ -278,9 +344,24 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, onSelectSnea
         borderBottom:`1px solid ${P.border}`, flexShrink:0,
         display:'flex', alignItems:'center', gap:12 }}>
         <span style={{ fontSize:11, color:P.muted, fontFamily:'Space Mono, monospace' }}>
-          {totalResults} result{totalResults !== 1 ? 's' : ''}
-          {query ? ` for "${query}"` : ''}
+          {liveLoading
+            ? '⟳ searching…'
+            : `${totalResults} result${totalResults !== 1 ? 's' : ''}${query ? ` for "${query}"` : ''}`}
         </span>
+        {liveError && (
+          <span style={{ fontSize:10, color:P.error, fontFamily:'Space Mono, monospace' }}
+            title={liveError}>⚠ API error — static data</span>
+        )}
+        {activeFolder && !liveError && liveResults !== null && (
+          <span style={{ fontSize:9, color:'#34c759', fontFamily:'Space Mono, monospace' }}>
+            ● live · {liveTotal} total in DB
+          </span>
+        )}
+        {!activeFolder && (
+          <span style={{ fontSize:9, color:P.muted, fontFamily:'Space Mono, monospace' }}>
+            demo data — set folder in Dashboard to search live index
+          </span>
+        )}
         {(statusFilter !== 'All' || locFilter !== 'All' || locSrcFilter !== 'All') && (
           <span onClick={() => { setStatusFilter('All'); setLocFilter('All'); setLocSrcFilter('All'); }}
             style={{ fontSize:10, color:P.accent, cursor:'pointer',

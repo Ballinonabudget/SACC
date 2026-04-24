@@ -21,6 +21,14 @@ Endpoints
   POST /api/preflight               { "path": ... }
   POST /api/rename                  { "path": ..., "loc": ..., "identifier": ..., "dry_run": bool }
   POST /api/pipeline-run            { "path": ..., "loc": ..., "fcp_mode": bool }
+
+  -- SQLite database endpoints --
+  POST /api/db/sync                 { "path": ... }
+  GET  /api/db/search?path=...&q=...&limit=50&offset=0
+  GET  /api/db/stats?path=...
+  GET  /api/db/record?path=...&stem=...
+  PATCH /api/db/record              { "path": ..., "stem": ..., <fields> }
+  GET  /api/db/validate?path=...
 """
 
 import os, sys, json, time, re, hashlib
@@ -37,6 +45,21 @@ app = Flask(__name__)
 CORS(app)  # allow SCAA frontend on :5173 to call this API on :5174
 
 # ── Optional imports (graceful degradation) ───────────────────────────────────
+try:
+    from db import SACCDB
+    _DB_OK = True
+except ImportError:
+    _DB_OK = False
+
+# Per-folder DB instance cache (keyed by db_path)
+_db_cache: dict = {}
+
+def _get_db(folder: str) -> "SACCDB":
+    db_path = os.path.join(folder, "sacc.db")
+    if db_path not in _db_cache:
+        _db_cache[db_path] = SACCDB(db_path)
+    return _db_cache[db_path]
+
 try:
     from fcp_namer import (
         LOCATION_DB, run_fcp_renamer, apply_confirmed_locations,
@@ -420,6 +443,124 @@ def pipeline_run():
         })
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Pipeline timed out after 300s"}), 504
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ── SQLite database endpoints ─────────────────────────────────────────────────
+
+@app.route("/api/db/sync", methods=["POST"])
+def db_sync():
+    """Ingest all JSON files in <folder>/json/ into sacc.db."""
+    if not _DB_OK:
+        return jsonify({"error": "db.py not available"}), 500
+    body   = request.get_json(silent=True) or {}
+    folder = body.get("path", "")
+    if not folder or not os.path.isdir(folder):
+        return jsonify({"error": f"Folder not found: {folder}"}), 404
+    try:
+        result = _get_db(folder).sync_from_folder(folder)
+        return jsonify({"ok": True, "folder": folder, **result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/db/search")
+def db_search():
+    """Full-text search across the SQLite database for a folder."""
+    if not _DB_OK:
+        return jsonify({"error": "db.py not available"}), 500
+    folder = request.args.get("path", "")
+    query  = request.args.get("q", "")
+    limit  = int(request.args.get("limit", 50))
+    offset = int(request.args.get("offset", 0))
+    if not folder or not os.path.isdir(folder):
+        return jsonify({"error": f"Folder not found: {folder}"}), 404
+    try:
+        db      = _get_db(folder)
+        results = db.search(query, limit=limit, offset=offset)
+        total   = db.stats().get("total", 0)
+        return jsonify({
+            "query":   query,
+            "total":   total,
+            "count":   len(results),
+            "offset":  offset,
+            "results": results,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/db/stats")
+def db_stats():
+    if not _DB_OK:
+        return jsonify({"error": "db.py not available"}), 500
+    folder = request.args.get("path", "")
+    if not folder or not os.path.isdir(folder):
+        return jsonify({"error": f"Folder not found: {folder}"}), 404
+    try:
+        db = _get_db(folder)
+        return jsonify({
+            "stats":         db.stats(),
+            "top_locations": db.top_locations(10),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/db/record")
+def db_get_record():
+    if not _DB_OK:
+        return jsonify({"error": "db.py not available"}), 500
+    folder = request.args.get("path", "")
+    stem   = request.args.get("stem", "")
+    if not folder or not stem:
+        return jsonify({"error": "path and stem required"}), 400
+    try:
+        record = _get_db(folder).get_by_stem(stem)
+        if record is None:
+            return jsonify({"error": f"Record not found: {stem}"}), 404
+        return jsonify(record)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/db/record", methods=["PATCH"])
+def db_patch_record():
+    if not _DB_OK:
+        return jsonify({"error": "db.py not available"}), 500
+    body   = request.get_json(silent=True) or {}
+    folder = body.pop("path", "")
+    stem   = body.pop("stem", "")
+    if not folder or not stem:
+        return jsonify({"error": "path and stem required"}), 400
+    try:
+        ok = _get_db(folder).patch(stem, body)
+        return jsonify({"ok": ok, "stem": stem})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/db/validate")
+def db_validate():
+    if not _DB_OK:
+        return jsonify({"error": "db.py not available"}), 500
+    folder = request.args.get("path", "")
+    if not folder or not os.path.isdir(folder):
+        return jsonify({"error": f"Folder not found: {folder}"}), 404
+    try:
+        db   = _get_db(folder)
+        rows = db.list_all(limit=10000)
+        missing_json = [r["stem"] for r in rows if r.get("json_path") and not os.path.exists(r["json_path"])]
+        no_model     = [r["stem"] for r in rows if not r.get("model")]
+        no_loc       = [r["stem"] for r in rows if not r.get("loc_code")]
+        return jsonify({
+            "total":        len(rows),
+            "missing_json": missing_json,
+            "no_model":     no_model,
+            "no_loc":       no_loc,
+            "clean":        not (missing_json or no_model or no_loc),
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
