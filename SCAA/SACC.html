@@ -65,12 +65,15 @@
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 
-<script src="sacc/data.js?v=3"></script>
-<script type="text/babel" src="sacc/components.jsx?v=3"></script>
-<script type="text/babel" src="sacc/gallery-view.jsx?v=3"></script>
-<script type="text/babel" src="sacc/timeline-view.jsx?v=3"></script>
-<script type="text/babel" src="sacc/import-view.jsx?v=3"></script>
-<script type="text/babel" src="sacc/search-view.jsx?v=3"></script>
+<script src="sacc/data.js?v=4"></script>
+<script type="text/babel" src="sacc/components.jsx?v=4"></script>
+<script type="text/babel" src="sacc/gallery-view.jsx?v=4"></script>
+<script type="text/babel" src="sacc/timeline-view.jsx?v=4"></script>
+<script type="text/babel" src="sacc/import-view.jsx?v=4"></script>
+<script type="text/babel" src="sacc/search-view.jsx?v=4"></script>
+<script type="text/babel" src="sacc/dashboard-view.jsx?v=4"></script>
+<script type="text/babel" src="sacc/renamer-view.jsx?v=4"></script>
+<script type="text/babel" src="sacc/verify-view.jsx?v=4"></script>
 </head>
 <body>
 
@@ -135,12 +138,16 @@ const ACCENT_MAP = {
   green:  'oklch(62% 0.18 155)',
 };
 
-const VIEW_LABELS = { gallery: 'Archive', timeline: 'Timeline', import: 'Import', search: 'Search' };
+const VIEW_LABELS = {
+  gallery: 'Archive', timeline: 'Timeline', import: 'Import', search: 'Search',
+  dashboard: 'Dashboard', renamer: 'Renamer', verify: 'Verify'
+};
 
 function App() {
   const P = SACC_PALETTE;
   const saved = (() => { try { return JSON.parse(localStorage.getItem('sacc_v2') || '{}'); } catch { return {}; } })();
 
+  const [activeFolder, setActiveFolder] = useState('/Volumes/Team Bank 12/Sneeaker Solo');
   const [view, setView]           = useState(saved.view || TWEAK_DEFAULTS.defaultView);
   const [mode, setMode]           = useState(saved.mode || TWEAK_DEFAULTS.mode);
   const [accent, setAccent]       = useState(saved.accent || TWEAK_DEFAULTS.accent);
@@ -212,11 +219,14 @@ function App() {
         const prev = curIdx > 0 ? orderedIds[curIdx - 1] : orderedIds[orderedIds.length - 1];
         setSelectedId(prev);
       }
-      // 1/2/3/4 — switch views
+      // 1–7 — switch views
       if (e.key === '1') setView('gallery');
       if (e.key === '2') setView('timeline');
-      if (e.key === '3') setView('import');
-      if (e.key === '4') setView('search');
+      if (e.key === '3') setView('search');
+      if (e.key === '4') setView('dashboard');
+      if (e.key === '5') setView('renamer');
+      if (e.key === '6') setView('verify');
+      if (e.key === '7') setView('import');
       // Esc — deselect
       if (e.key === 'Escape') setSelectedId(null);
     };
@@ -280,10 +290,22 @@ function App() {
   const appW = Math.min(winSize.w, 1440);
   const appH = Math.min(winSize.h, 900);
 
-  // Lite mode: only gallery + detail, no import tab
+  // View definitions — Lite hides pipeline ops
   const visibleViews = mode === 'lite'
-    ? [{ id: 'gallery', icon: '⊞', label: 'Archive' }, { id: 'timeline', icon: '☰', label: 'Timeline' }, { id: 'search', icon: '⌕', label: 'Search' }]
-    : [{ id: 'gallery', icon: '⊞', label: 'Archive' }, { id: 'timeline', icon: '☰', label: 'Timeline' }, { id: 'import', icon: '↓', label: 'Import' }, { id: 'search', icon: '⌕', label: 'Search' }];
+    ? [
+        { id: 'gallery',   icon: '⊞', label: 'Archive' },
+        { id: 'timeline',  icon: '☰', label: 'Timeline' },
+        { id: 'search',    icon: '⌕', label: 'Search' },
+      ]
+    : [
+        { id: 'gallery',   icon: '⊞', label: 'Archive' },
+        { id: 'timeline',  icon: '☰', label: 'Timeline' },
+        { id: 'search',    icon: '⌕', label: 'Search' },
+        { id: 'dashboard', icon: '◈', label: 'Dashboard' },
+        { id: 'renamer',   icon: '✎', label: 'Renamer' },
+        { id: 'verify',    icon: '✓', label: 'Verify' },
+        { id: 'import',    icon: '↓', label: 'Import' },
+      ];
 
   return (
     <>
@@ -403,6 +425,16 @@ function App() {
             <TimelineView sneakers={SACC_DATA.sneakers} selectedId={selectedId}
               onSelect={id => setSelectedId(id === selectedId ? null : id)}
               filters={filters} setFilters={setFilters} mode={mode} />
+          )}
+          {view === 'dashboard' && (
+            <DashboardView mode={mode} accent={accentColor}
+              folder={activeFolder} setFolder={setActiveFolder} />
+          )}
+          {view === 'renamer' && (
+            <RenamerView mode={mode} accent={accentColor} folder={activeFolder} />
+          )}
+          {view === 'verify' && (
+            <VerifyView mode={mode} accent={accentColor} folder={activeFolder} />
           )}
           {view === 'import' && mode === 'pro' && (
             <ImportView queue={SACC_DATA.queue} log={SACC_DATA.log} mode={mode} />
