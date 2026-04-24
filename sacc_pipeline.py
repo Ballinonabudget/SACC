@@ -1,25 +1,56 @@
 """
 sacc_pipeline.py — SACC Full Pipeline Orchestrator
 ====================================================
-Pipeline sequence (per design spec):
+Pipeline sequence (strict order — do not reorder):
 
-  1. FCP Inspector rename  →  (manual, done before consolidation)
-  2. Consolidation         →  FCP drops files into Inbox/ on Team Bank 12
-  3. Batch Rename          →  run_vibe_renamer() applies LOC-TYPE_YYMMDD_ID_Cam_orig naming
-  4. Folder organisation   →  files moved to /SACC/{YEAR}/{YYMMDD}/
-  5. Apple Compressor      →  run_compression() queues 720p HEVC jobs → _Gemini_API.mp4
-  6. Wait for completion   →  wait_for_compression() polls until outputs exist
-  7. Gemini API analysis   →  analyze_sneaker_video() → JSON with Model/SKU/Size/Price
-  8. JSON output           →  saved to /SACC/{YEAR}/{YYMMDD}/json/{sku}_{model}.json
-  9. Pre-Flight gate       →  clips flagged by ffprobe (duration < 3s, motion 0) are skipped
+  STAGE 1 ── FCP Inspector rename    (manual, done before consolidation)
+  STAGE 2 ── FCP consolidation       (FCP drops files into Inbox/)
+  STAGE 3 ── Batch rename            → two modes:
+             [classic]  run_vibe_renamer()     --loc + --id  required
+             [fcp]      run_fcp_renamer()      --fcp flag    GPS auto-detect
+             Establishes the permanent SACC filename as the relational key.
+             ALL downstream assets inherit this name.
+  STAGE 4 ── Folder organisation     → move renamed files to /SACC/YYYY/YYYYMMDD/
+  STAGE 5 ── Pre-Flight gate         → ffprobe checks duration + motion
+  STAGE 6 ── Proxy compression       → run_compression()
+             Creates low-bitrate _proxy/<same_filename>.mp4
+             Proxy inherits the EXACT renamed source filename.
+  STAGE 7 ── Wait for proxies        → wait_for_proxies()
+  STAGE 8 ── Vertex AI / Gemini      → analyze_sneaker_video()
+             JSON output keyed by original_file (relational key to hi-res master).
+  STAGE 9 ── Proxy cleanup           → cleanup_proxies()
+             _proxy/ directory deleted. Proxies are transient assets.
+  STAGE 10 ─ JSON index              → permanent record lives in /json/
+             JSON stem == source filename stem → points back to hi-res master.
 
-Usage:
+Naming contract — FCP mode (GPS auto-detect, recommended)
+----------------------------------------------------------
+  [Custom Name]   = GPS geofence → location shorthand  e.g. PDM-MALL
+  [Date]          = YYYYMMDD (from original shoot metadata)
+  [Model Name]    = camera device                       e.g. iPhone15ProMax
+  [Original Name] = source filename stem                e.g. IMG_3439
+
+  Source  : /2026/20241221/PDM-MALL_20241221_iPhone15ProMax_IMG_3439.mov
+  Proxy   : /2026/20241221/_proxy/PDM-MALL_20241221_iPhone15ProMax_IMG_3439.mp4
+  JSON    : /2026/20241221/json/PDM-MALL_20241221_iPhone15ProMax_IMG_3439.json
+            └── "original_file": "PDM-MALL_...IMG_3439.mov"  ← permanent relational key
+
+Naming contract — Classic mode (manual loc + id)
+-------------------------------------------------
+  Source  : /2026/260423/FLM-MALL_260423_Air-Jordan-1-Chicago_iPhone15ProMax_IMG_3439.mov
+
+Usage (FCP mode — GPS auto-detect):
+  python sacc_pipeline.py --fcp \\
+                          --inbox "/Volumes/Team Bank 12/SACC/Inbox" \\
+                          --root  "/Volumes/Team Bank 12/SACC"
+
+Usage (Classic mode — manual identifier):
   python sacc_pipeline.py --inbox "/Volumes/Team Bank 12/SACC/Inbox" \\
                           --root  "/Volumes/Team Bank 12/SACC"       \\
                           --loc   FLM                                  \\
                           --id    "Air Jordan 1 Chicago"
 
-  Or run via sacc_watcher.py for fully automated folder-watch mode.
+  python sacc_pipeline.py --dry-run  (preview only)
 """
 
 import os
@@ -29,49 +60,54 @@ import time
 import shutil
 import argparse
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # ── Local imports ─────────────────────────────────────────────────────────────
 _DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _DIR)
 
-from renamer_logic   import run_vibe_renamer, extract_metadata
-from compress_jordans import run_compression, wait_for_compression
-from gemini_pipeline import analyze_sneaker_video
+from renamer_logic    import run_vibe_renamer, extract_metadata
+from compress_jordans import run_compression, wait_for_proxies, cleanup_proxies
+from gemini_pipeline  import analyze_sneaker_video
+from fcp_namer        import run_fcp_renamer, LOCATION_DB
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-SYNOLOGY_ROOT = "/Volumes/Team Bank 12/SACC"
-INBOX_PATH    = os.path.join(SYNOLOGY_ROOT, "Inbox")
+SYNOLOGY_ROOT = os.getenv("SACC_ROOT",  "/Volumes/Team Bank 12/SACC")
+INBOX_PATH    = os.getenv("SACC_INBOX", os.path.join(SYNOLOGY_ROOT, "Inbox"))
 VIDEO_EXTS    = {".mov", ".mp4", ".m4v"}
 
-# Pre-Flight thresholds (mirrors frontend PreFlightPanel logic)
+# Pre-Flight thresholds
 MIN_DURATION_SECS = 3
-MIN_MOTION_SCORE  = 1   # 0 = no detectable movement → skip
+MIN_MOTION_SCORE  = 1
 
 
-# ── Folder structure helpers ──────────────────────────────────────────────────
+# ── Folder helpers ────────────────────────────────────────────────────────────
 
 def dated_folder(root, date_str):
     """
-    Returns (and creates) /root/YYYY/YYMMDD/ from a YYMMDD string.
-    e.g. date_str="250111" → /root/2025/250111/
+    Returns (and creates) /root/YYYY/DATE_STR/ and the json/ subfolder.
+
+    Accepts both FCP-mode YYYYMMDD (e.g. "20241221") and classic YYMMDD
+    (e.g. "241221").  The parent YYYY directory is always derived correctly.
     """
-    year = "20" + date_str[:2]
+    if len(date_str) == 8:          # YYYYMMDD → FCP mode
+        year = date_str[:4]
+    else:                            # YYMMDD   → classic mode
+        year = "20" + date_str[:2]
     path = os.path.join(root, year, date_str)
-    os.makedirs(path, exist_ok=True)
     os.makedirs(os.path.join(path, "json"), exist_ok=True)
     return path
 
 
 def inbox_files(inbox):
-    """Return all video files currently in the Inbox folder (non-recursive)."""
+    """Non-recursive list of video files in the Inbox folder."""
     if not os.path.isdir(inbox):
         return []
     return [
         os.path.join(inbox, f)
         for f in os.listdir(inbox)
-        if not f.startswith('.') and Path(f).suffix.lower() in VIDEO_EXTS
+        if not f.startswith(".") and Path(f).suffix.lower() in VIDEO_EXTS
     ]
 
 
@@ -79,274 +115,439 @@ def inbox_files(inbox):
 
 def preflight_check(file_path):
     """
-    Runs a minimal ffprobe check on a single file.
+    Minimal ffprobe check: duration ≥ 3s and motion proxy > 0.
     Returns (pass: bool, reasons: list[str])
-
-    Flags (auto-skip):  duration < 3s, motion_score == 0
-    Exempt (not flagged): audio absence, file size
     """
     ffprobe = os.path.join(_DIR, "ffprobe")
     if not os.path.exists(ffprobe):
-        ffprobe = "ffprobe"  # fall back to system ffprobe
+        ffprobe = "ffprobe"
 
-    cmd = [
-        ffprobe, "-v", "quiet",
-        "-print_format", "json",
-        "-show_streams", "-show_format",
-        file_path
-    ]
-
+    cmd = [ffprobe, "-v", "quiet", "-print_format", "json",
+           "-show_streams", "-show_format", file_path]
     try:
-        out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
-        data = json.loads(out)
-
+        data     = json.loads(subprocess.check_output(cmd, stderr=subprocess.DEVNULL))
         duration = float(data.get("format", {}).get("duration", 999))
         if duration < MIN_DURATION_SECS:
-            return False, [f"duration {duration:.1f}s < {MIN_DURATION_SECS}s"]
+            return False, [f"duration {duration:.1f}s < {MIN_DURATION_SECS}s minimum"]
 
-        # Motion score: approximated by nb_read_frames / duration
-        # A real implementation would use scene-change detection;
-        # here we use stream frame count as a proxy.
-        streams = data.get("streams", [])
-        vid = next((s for s in streams if s.get("codec_type") == "video"), {})
+        streams  = data.get("streams", [])
+        vid      = next((s for s in streams if s.get("codec_type") == "video"), {})
         nb_frames = int(vid.get("nb_read_frames", vid.get("nb_frames", 999)) or 999)
         motion_proxy = min(100, int(nb_frames / max(duration, 1)))
         if motion_proxy < MIN_MOTION_SCORE:
-            return False, ["motion score 0 — no detectable movement"]
+            return False, ["motion score 0 — no detectable movement in clip"]
 
         return True, []
-
     except Exception as e:
-        # If ffprobe fails, don't block the file — pass it through
+        # ffprobe failure is non-blocking — pass the file through
         print(f"  [preflight] ffprobe error on {os.path.basename(file_path)}: {e}")
         return True, []
 
 
 # ── Pipeline stages ───────────────────────────────────────────────────────────
 
+def stage_rename_fcp(inbox, loc_override=None):
+    """
+    STAGE 3 (FCP mode) — GPS-aware batch rename using fcp_namer.
+
+    Token map:
+      [Custom Name]   = GPS geofence → LOC-TYPE shorthand (e.g. PDM-MALL)
+      [Date]          = YYYYMMDD from original shoot metadata
+      [Model Name]    = camera device (e.g. iPhone15ProMax, SonyA7IV)
+      [Original Name] = original filename stem
+
+    GPS from iPhone clips propagates to non-GPS devices (Sony, DJI, GoPro)
+    within the same recording session (SESSION_WINDOW_HOURS).
+
+    loc_override bypasses GPS lookup — useful when Inbox has no iPhone clips.
+    Returns list of new absolute paths.
+    """
+    print(f"\n[STAGE 3] FCP rename — GPS auto-detect"
+          + (f"  loc_override={loc_override}" if loc_override else ""))
+
+    renamed = []
+    for result in run_fcp_renamer(inbox, loc_override=loc_override, dry_run=False):
+        if result.get("error") and not result.get("done"):
+            print(f"  [fcp] ERROR: {result['error']}")
+            return []
+        if result.get("done"):
+            print(f"  [fcp] Done — {result['renamed']} file(s) renamed, "
+                  f"{result['skipped']} skipped")
+            break
+        if result.get("status") in ("renamed", "skipped"):
+            new_name = result.get("new") or result.get("original")
+            renamed.append(os.path.join(inbox, new_name))
+
+    return renamed
+
+
 def stage_rename(inbox, loc_code, identifier):
     """
-    Stage 3: Run batch rename on all files in Inbox.
-    Returns list of new file paths after rename.
+    STAGE 3 — Batch rename all files in Inbox.
+    This establishes the permanent SACC filename that all downstream
+    assets (proxy, JSON) will inherit as the relational key.
+    Returns list of new absolute paths.
     """
-    print(f"\n[STAGE 3] Batch rename — loc={loc_code}, id='{identifier}'")
+    print(f"\n[STAGE 3] Batch rename — loc={loc_code}  id='{identifier}'")
     renamed = []
     for result in run_vibe_renamer(inbox, loc_code, identifier):
         if result.get("error"):
             print(f"  [rename] ERROR: {result['error']}")
             return []
         if not result.get("done"):
-            print(f"  [rename] {result['current']}/{result['total']} "
-                  f"{result.get('original')} → {result.get('new')}")
-            renamed.append(os.path.join(inbox, result["new"]))
+            orig = result.get("original", "")
+            new  = result.get("new", "")
+            print(f"  [rename] {result['current']}/{result['total']}  {orig} → {new}")
+            renamed.append(os.path.join(inbox, new))
     print(f"  [rename] Done — {len(renamed)} file(s) renamed")
     return renamed
 
 
 def stage_organise(inbox, root, files):
     """
-    Stage 4: Move renamed files from Inbox → /root/YYYY/YYMMDD/.
-    Returns dict mapping original_path → destination_path.
+    STAGE 4 — Move renamed files from Inbox → /root/YYYY/DATE_STR/.
+    Supports both FCP-mode YYYYMMDD and classic YYMMDD date strings.
+    Date is read directly from the file's metadata via extract_metadata().
+    Returns dict: original_path → destination_path.
     """
     print(f"\n[STAGE 4] Organising files into dated folders under {root}")
     moved = {}
     for fp in files:
-        date_str, _ = extract_metadata(fp)
-        dest_dir = dated_folder(root, date_str)
-        dest_path = os.path.join(dest_dir, os.path.basename(fp))
+        raw_date, _ = extract_metadata(fp)
+        # FCP mode produces YYYYMMDD; classic produces YYMMDD — dated_folder handles both
+        dest_dir    = dated_folder(root, raw_date)
+        dest_path   = os.path.join(dest_dir, os.path.basename(fp))
         if os.path.exists(dest_path):
-            print(f"  [organise] Already exists, skipping: {os.path.basename(fp)}")
-            moved[fp] = dest_path
-            continue
-        shutil.move(fp, dest_path)
-        print(f"  [organise] {os.path.basename(fp)} → {dest_dir}/")
+            print(f"  [organise] Already exists — skipping: {os.path.basename(fp)}")
+        else:
+            shutil.move(fp, dest_path)
+            print(f"  [organise] {os.path.basename(fp)} → {dest_dir}/")
         moved[fp] = dest_path
     return moved
 
 
 def stage_preflight(files):
     """
-    Pre-Flight gate: filter out clips that would waste Compressor / Gemini quota.
-    Returns (approved, skipped) lists of file paths.
+    STAGE 5 — Filter clips that would waste Compressor / API quota.
+    Returns (approved, skipped) path lists.
     """
-    print(f"\n[PRE-FLIGHT] Checking {len(files)} file(s)…")
+    print(f"\n[STAGE 5] Pre-Flight — checking {len(files)} file(s)")
     approved, skipped = [], []
     for fp in files:
         ok, reasons = preflight_check(fp)
-        if ok:
-            print(f"  ✓ PASS  {os.path.basename(fp)}")
-            approved.append(fp)
-        else:
-            print(f"  ⚠ SKIP  {os.path.basename(fp)} — {', '.join(reasons)}")
-            skipped.append(fp)
+        tag = "✓ PASS" if ok else "⚠ SKIP"
+        detail = "" if ok else f" — {', '.join(reasons)}"
+        print(f"  {tag}  {os.path.basename(fp)}{detail}")
+        (approved if ok else skipped).append(fp)
     print(f"  Pre-Flight: {len(approved)} approved, {len(skipped)} skipped")
     return approved, skipped
 
 
 def stage_compress(dest_dir):
     """
-    Stage 5 + 6: Queue Apple Compressor jobs and wait for completion.
-    Returns list of ready compressed file paths.
+    STAGE 6 + 7 — Queue Apple Compressor proxy jobs and wait.
+
+    Proxy naming rule enforced here:
+      proxy stem == source stem (same filename, forced .mp4 extension)
+    Returns list of result dicts from compress_jordans.run_compression().
     """
-    print(f"\n[STAGE 5] Queueing Apple Compressor jobs from {dest_dir}")
-    results = run_compression(dest_dir)
+    json_dir = os.path.join(dest_dir, "json")
+    print(f"\n[STAGE 6] Queuing proxy jobs — source: {dest_dir}")
+
+    results = run_compression(dest_dir, json_folder=json_dir)
     if not results:
         print("  [compress] Nothing to compress.")
         return []
 
+    # Surface summary
     for r in results:
-        print(f"  [{r['status'].upper()}] {r['original']} → {os.path.basename(r['compressed_path'] or '')}")
+        print(f"  [{r['status'].upper():10}] {r['original_file']}")
 
-    print(f"\n[STAGE 6] Waiting for Compressor to finish…")
-    results = wait_for_compression(results, timeout=3600, poll_interval=15)
-
-    ready = [r["compressed_path"] for r in results
-             if r["status"] in ("ready", "exists") and r.get("compressed_path")]
-    print(f"  [compress] {len(ready)} file(s) ready for Gemini")
-    return ready
+    print(f"\n[STAGE 7] Waiting for Compressor to finish…")
+    results = wait_for_proxies(results, timeout=3600, poll_interval=15)
+    return results
 
 
-def stage_gemini(compressed_files, json_root):
+def stage_vertex(compress_results, dest_dir):
     """
-    Stage 7 + 8: Send each compressed file to Gemini API and save JSON output.
-    Returns list of saved JSON file paths.
-    """
-    print(f"\n[STAGE 7] Gemini API analysis — {len(compressed_files)} file(s)")
-    saved_jsons = []
+    STAGE 8 — Upload each ready proxy to Vertex AI / Gemini API.
 
-    for fp in compressed_files:
-        print(f"  → Analysing: {os.path.basename(fp)}")
-        result = analyze_sneaker_video(fp)
+    The JSON written for each file uses the ORIGINAL (renamed) filename
+    as both its filename stem and its internal 'original_file' field,
+    creating the permanent relational key back to the hi-res master.
+
+    Returns list of paths to written JSON files.
+    """
+    json_dir = os.path.join(dest_dir, "json")
+    os.makedirs(json_dir, exist_ok=True)
+
+    ready = [r for r in compress_results
+             if r["status"] in ("ready", "exists") and r.get("proxy_path")]
+
+    if not ready:
+        print("\n[STAGE 8] No proxies ready — skipping Vertex AI analysis.")
+        return []
+
+    print(f"\n[STAGE 8] Vertex AI analysis — {len(ready)} proxy file(s)")
+    saved = []
+
+    for r in ready:
+        proxy_path     = r["proxy_path"]
+        original_file  = r["original_file"]     # ← relational key
+        original_path  = r["original_path"]
+
+        print(f"  → {original_file}")
+
+        result = analyze_sneaker_video(
+            proxy_path    = proxy_path,
+            original_file = original_file,
+            original_path = original_path,
+        )
 
         if result.get("error"):
-            print(f"  [gemini] ERROR: {result['error']}")
+            print(f"  [vertex] ERROR: {result['error']}")
             continue
 
-        # Annotate with source file and timestamp
-        result["source_file"] = os.path.basename(fp)
-        result["analysed_at"] = datetime.utcnow().isoformat() + "Z"
-
-        sku   = result.get("SKU", "UNKNOWN").replace("/", "-")
-        model = result.get("Model", "Unknown").replace(" ", "_")[:40]
-        json_name = f"{sku}_{model}.json"
-        json_path = os.path.join(json_root, json_name)
+        # JSON stem == source filename stem (relational key)
+        json_stem = Path(original_file).stem
+        json_path = os.path.join(json_dir, f"{json_stem}.json")
 
         with open(json_path, "w") as f:
             json.dump(result, f, indent=2)
 
-        print(f"  [gemini] ✓ {json_name}")
-        print(f"           Model: {result.get('Model')} | SKU: {sku} | "
-              f"Size: {result.get('Size')} | Price: {result.get('Price')}")
-        saved_jsons.append(json_path)
+        print(f"  [vertex] ✓  {json_stem}.json")
+        print(f"             Model={result.get('Model')}  "
+              f"SKU={result.get('SKU')}  "
+              f"Size={result.get('Size')}  "
+              f"Price={result.get('Price')}")
 
-    print(f"  [gemini] {len(saved_jsons)} JSON file(s) saved to {json_root}")
-    return saved_jsons
+        # Location fields — from visual signage + audio transcript
+        loc_vis  = result.get("Location_Visual")  or ""
+        loc_aud  = result.get("Location_Audio")   or ""
+        loc_code = result.get("loc_code_confirmed") or ""
+        loc_conf = result.get("Location_Confidence") or ""
+        if loc_code:
+            print(f"             Location={loc_code}  "
+                  f"confidence={loc_conf}  visual='{loc_vis}'")
+        elif loc_vis:
+            print(f"             Location_Visual='{loc_vis}'  "
+                  f"confidence={loc_conf}  (no code match)")
+        else:
+            print(f"             Location: not identified from video")
+
+        saved.append(json_path)
+
+    print(f"  [vertex] {len(saved)} JSON file(s) written to {json_dir}")
+
+    # ── Stage 10 trigger: if any UNKNOWN filenames exist and loc was confirmed
+    unknown_files = [jp for jp in saved
+                     if os.path.basename(jp).startswith("UNKNOWN")]
+    confirmed_count = 0
+    for jp in saved:
+        try:
+            with open(jp) as fh:
+                d = json.load(fh)
+            if d.get("loc_code_confirmed"):
+                confirmed_count += 1
+        except Exception:
+            pass
+
+    if unknown_files and confirmed_count:
+        print(f"\n  [vertex] {confirmed_count} location(s) confirmed by AI — "
+              f"run Stage 10 to apply:")
+        print(f"    python fcp_namer.py --apply-loc --folder {dest_dir}")
+
+    return saved
 
 
-# ── Main pipeline entry point ─────────────────────────────────────────────────
-
-def run_pipeline(inbox, root, loc_code, identifier, dry_run=False):
+def stage_proxy_cleanup(dest_dir, json_paths):
     """
-    Full SACC pipeline: rename → organise → preflight → compress → Gemini → JSON.
+    STAGE 9 — Delete _proxy/ after all JSON files are confirmed written.
+    Marks proxy_deleted=True in each JSON to record lifecycle completion.
+    """
+    print(f"\n[STAGE 9] Proxy cleanup")
+
+    # Mark proxy_deleted=True in every JSON written this run
+    for jp in json_paths:
+        try:
+            with open(jp) as f:
+                data = json.load(f)
+            data["proxy_deleted"] = True
+            with open(jp, "w") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            print(f"  [cleanup] Could not update {os.path.basename(jp)}: {e}")
+
+    count = cleanup_proxies(dest_dir)
+    if count == 0:
+        print("  [cleanup] No proxy files to delete.")
+
+
+# ── Main orchestrator ─────────────────────────────────────────────────────────
+
+def run_pipeline(inbox, root, loc_code, identifier,
+                 dry_run=False, fcp_mode=False):
+    """
+    Full SACC pipeline — enforces rename-first, proxy-same-name, proxy-delete.
 
     Args:
-        inbox     : Path to the Inbox folder (watch target)
-        root      : SACC root on Synology (e.g. /Volumes/Team Bank 12/SACC)
-        loc_code  : Location code (e.g. "FLM")
-        identifier: Shoe identifier (e.g. "Air Jordan 1 Chicago")
-        dry_run   : If True, print plan but don't rename/move/compress/call API
+        inbox      : Inbox watch folder (FCP consolidation target)
+        root       : SACC root on Synology (/Volumes/Team Bank 12/SACC)
+        loc_code   : Location code — used in classic mode, or as GPS fallback
+                     in fcp_mode when no iPhone GPS is available in the batch
+        identifier : Shoe identifier string — classic mode only
+        dry_run    : Print plan only — no renames, moves, compressions, or API calls
+        fcp_mode   : Use GPS-aware FCP naming engine (recommended)
+                     Token map: [Custom Name]_[Date]_[Model Name]_[Original Name]
     """
     start = time.time()
+    mode_label = "FCP (GPS auto-detect)" if fcp_mode else "Classic (manual --loc/--id)"
     print("=" * 60)
     print("SACC Pipeline — Starting")
     print(f"  Inbox      : {inbox}")
     print(f"  Root       : {root}")
-    print(f"  Location   : {loc_code}")
-    print(f"  Identifier : {identifier}")
+    print(f"  Mode       : {mode_label}")
+    if not fcp_mode:
+        print(f"  Location   : {loc_code}")
+        print(f"  Identifier : {identifier}")
+    else:
+        if loc_code:
+            print(f"  GPS fallback loc : {loc_code}")
     print(f"  Dry run    : {dry_run}")
     print("=" * 60)
 
-    files_in_inbox = inbox_files(inbox)
-    if not files_in_inbox:
+    files = inbox_files(inbox)
+    if not files:
         print("[pipeline] Inbox is empty — nothing to process.")
         return
 
-    print(f"[pipeline] Found {len(files_in_inbox)} file(s) in Inbox")
+    print(f"[pipeline] {len(files)} file(s) found in Inbox")
 
     if dry_run:
-        for f in files_in_inbox:
-            print(f"  DRY-RUN: would process {os.path.basename(f)}")
+        if fcp_mode:
+            # FCP dry-run: show GPS resolution + proposed names
+            for _ in run_fcp_renamer(inbox, loc_override=loc_code or None,
+                                     dry_run=True):
+                pass
+        else:
+            for f in files:
+                print(f"  DRY-RUN: would process {os.path.basename(f)}")
         return
 
-    # Stage 3: Batch rename
-    renamed_files = stage_rename(inbox, loc_code, identifier)
-    if not renamed_files:
+    # ── STAGE 3: Rename first — establishes permanent relational key ──────────
+    if fcp_mode:
+        renamed = stage_rename_fcp(inbox, loc_override=loc_code or None)
+    else:
+        renamed = stage_rename(inbox, loc_code, identifier)
+
+    if not renamed:
         print("[pipeline] Rename stage failed — aborting.")
         return
 
-    # Stage 4: Organise into dated folders on Synology
-    moved = stage_organise(inbox, root, renamed_files)
+    # ── STAGE 4: Organise into dated folders ──────────────────────────────────
+    moved     = stage_organise(inbox, root, renamed)
     dest_files = list(moved.values())
-
     if not dest_files:
-        print("[pipeline] No files to continue processing.")
+        print("[pipeline] No files organised — aborting.")
         return
 
-    # Group by destination directory
+    # Group by destination directory (one batch per date folder)
     dest_dirs = {}
     for fp in dest_files:
-        d = os.path.dirname(fp)
-        dest_dirs.setdefault(d, []).append(fp)
+        dest_dirs.setdefault(os.path.dirname(fp), []).append(fp)
 
     for dest_dir, batch in dest_dirs.items():
-        json_dir = os.path.join(dest_dir, "json")
-        os.makedirs(json_dir, exist_ok=True)
+        print(f"\n── Batch: {dest_dir}  ({len(batch)} file(s)) ──")
 
-        print(f"\n── Processing batch in {dest_dir} ({len(batch)} file(s)) ──")
-
-        # Pre-Flight gate
+        # ── STAGE 5: Pre-Flight ───────────────────────────────────────────────
         approved, skipped = stage_preflight(batch)
         if skipped:
-            skipped_log = os.path.join(dest_dir, "preflight_skipped.json")
-            with open(skipped_log, "w") as f:
+            log_path = os.path.join(dest_dir, "preflight_skipped.json")
+            with open(log_path, "w") as f:
                 json.dump([os.path.basename(s) for s in skipped], f, indent=2)
-            print(f"  Skipped files logged → {skipped_log}")
+            print(f"  Skipped files logged → {log_path}")
 
         if not approved:
-            print("  No files passed Pre-Flight — skipping compression and Gemini stages.")
+            print("  No files passed Pre-Flight — skipping compression and API stages.")
             continue
 
-        # Stage 5 + 6: Compress
-        compressed = stage_compress(dest_dir)
-        if not compressed:
-            print("  No compressed files ready — skipping Gemini stage.")
+        # ── STAGES 6+7: Compress → proxy inherits renamed filename ────────────
+        compress_results = stage_compress(dest_dir)
+        if not compress_results:
+            print("  No proxies ready — skipping API stage.")
             continue
 
-        # Stage 7 + 8: Gemini API + JSON output
-        stage_gemini(compressed, json_dir)
+        # ── STAGE 8: Vertex AI → JSON keyed by original_file ─────────────────
+        #   JSON now includes location fields (visual + audio) in addition
+        #   to shoe fields. loc_code_confirmed is set when confidence ≥ medium.
+        json_paths = stage_vertex(compress_results, dest_dir)
+
+        # ── STAGE 9: Delete proxies — they are transient assets ───────────────
+        if json_paths:
+            stage_proxy_cleanup(dest_dir, json_paths)
+        else:
+            print("  No JSON written — proxies NOT deleted (safe to retry).")
+
+        # ── STAGE 10 (auto): Apply AI-confirmed location to UNKNOWN filenames ──
+        #   Runs automatically when fcp_mode was used without --loc and the
+        #   AI returned a confirmed location code (confidence high or medium).
+        if fcp_mode:
+            from fcp_namer import apply_confirmed_locations
+            confirmed = apply_confirmed_locations(dest_dir, dry_run=False)
+            if confirmed:
+                print(f"  [stage 10] {len(confirmed)} file(s) renamed with "
+                      f"confirmed location")
 
     elapsed = round(time.time() - start, 1)
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"SACC Pipeline — Complete in {elapsed}s")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
 
-# ── CLI entry ─────────────────────────────────────────────────────────────────
+# ── CLI ───────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="SACC Pipeline — FCP consolidation → rename → compress → Gemini → JSON"
+        description="SACC Pipeline — rename → compress → Vertex AI → JSON",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # FCP mode — GPS auto-detect (recommended)
+  python sacc_pipeline.py --fcp --inbox "/Volumes/Team Bank 12/SACC/Inbox" \\
+                          --root "/Volumes/Team Bank 12/SACC"
+
+  # FCP dry-run
+  python sacc_pipeline.py --fcp --dry-run
+
+  # Classic mode — manual loc + id
+  python sacc_pipeline.py --inbox "/Volumes/Team Bank 12/SACC/Inbox" \\
+                          --root  "/Volumes/Team Bank 12/SACC"       \\
+                          --loc   FLM --id "Air Jordan 1 Chicago"
+        """
     )
-    parser.add_argument("--inbox",   default=INBOX_PATH,    help="Inbox watch folder path")
+    parser.add_argument("--inbox",   default=INBOX_PATH,    help="Inbox watch folder")
     parser.add_argument("--root",    default=SYNOLOGY_ROOT, help="SACC root on Synology")
-    parser.add_argument("--loc",     default="FLM",         help="Location code (e.g. FLM)")
-    parser.add_argument("--id",      default="",            help="Shoe identifier string")
-    parser.add_argument("--dry-run", action="store_true",   help="Print plan only, no changes")
+    parser.add_argument("--fcp",     action="store_true",
+                        help="FCP mode: GPS geofence auto-detects location token. "
+                             "Propagates to non-GPS devices in same session.")
+    parser.add_argument("--loc",     default="",
+                        help="Classic mode: location code e.g. FLM. "
+                             "FCP mode: GPS fallback when no iPhone clips present.")
+    parser.add_argument("--id",      default="",
+                        help="Classic mode: shoe identifier (e.g. 'Air Jordan 1 Chicago')")
+    parser.add_argument("--dry-run", action="store_true",   help="Preview only, no changes")
     args = parser.parse_args()
 
-    if not args.id:
-        print("ERROR: --id is required (e.g. --id 'Air Jordan 1 Chicago')")
-        sys.exit(1)
+    # Validation
+    if not args.fcp:
+        if not args.id and not args.dry_run:
+            print("ERROR: --id is required in classic mode  "
+                  "(e.g. --id 'Air Jordan 1 Chicago')")
+            print("       Use --fcp for GPS auto-detect mode.")
+            sys.exit(1)
+        if not args.loc:
+            print("ERROR: --loc is required in classic mode  (e.g. --loc FLM)")
+            sys.exit(1)
 
     run_pipeline(
         inbox      = args.inbox,
@@ -354,4 +555,5 @@ if __name__ == "__main__":
         loc_code   = args.loc,
         identifier = args.id,
         dry_run    = args.dry_run,
+        fcp_mode   = args.fcp,
     )

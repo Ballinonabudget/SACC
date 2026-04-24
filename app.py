@@ -778,17 +778,9 @@ with tab_renamer:
     st.markdown("#### 2. Execute Vibe Renamer")
     
     # Trigger variables
-    qp = st.query_params
     triggered = False
     loc = None
     target_id = None
-    
-    # Check JS Query Param Trigger
-    if "renamer_trigger" in qp:
-        loc = qp.get("loc")
-        target_id = qp.get("id")
-        triggered = True
-        st.query_params.clear()
         
     # Check Native Form Trigger
     if st.session_state.get("native_renamer_trigger"):
@@ -836,181 +828,28 @@ with tab_renamer:
                 for r in final_res.get("results", []):
                     st.write(f"✅ `{r['new']}`")
                     
-    tab_js, tab_native = st.tabs(["⚡ Ghost-Text Interface", "🛠️ Manual Entry"])
+    st.markdown("##### ⚡ Location & Identifier Config")
+    loc_options = [f"{c} — {d['name']}" for c, d in LOCATION_DATA.items()]
     
-    with tab_native:
-        with st.form("native_renamer_form"):
-            col_n1, col_n2 = st.columns(2)
-            loc_options = [f"{c} — {d['name']}" for c, d in LOCATION_DATA.items()]
-            sel_loc = col_n1.selectbox("Location Code", loc_options)
-            sel_id = col_n2.text_input("Identifier", placeholder="e.g. Kobe12")
-            
-            submit_native = st.form_submit_button("▶ Run Batch Renamer", type="primary", use_container_width=True)
-            if submit_native and sel_loc and sel_id:
-                st.session_state["native_renamer_trigger"] = True
-                st.session_state["native_loc"] = sel_loc.split(" — ")[0]
-                st.session_state["native_id"] = sel_id
-                st.rerun()
-
-    with tab_js:
-
-        # Build Javascript component
-        loc_array = [{"code": c, "name": d["name"], "type": d["type"], "region": d.get("region", "")} for c, d in LOCATION_DATA.items()]
-        js_locs = json.dumps(loc_array)
-        
-        html_code = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-        <style>
-        body {{ font-family: 'Inter', sans-serif; margin: 0; padding: 10px; background: transparent; }}
-        .container {{ display: flex; gap: 15px; align-items: flex-start; }}
-        .input-column {{ flex: 1; display: flex; flex-direction: column; gap: 8px; }}
-        .input-wrapper {{ position: relative; width: 100%; }}
-        .search-input {{ 
-            width: 100%; padding: 14px 18px; font-size: 16px; border: 2px solid #E2E8F0; 
-            border-radius: 8px; background: white; color: #1E293B; outline: none;
-            box-sizing: border-box; transition: border 0.2s; font-family: 'Inter', sans-serif;
-        }}
-        .search-input:focus {{ border-color: #10B981; box-shadow: 0 4px 6px -1px rgba(16,185,129,0.1); background: #FAFAFA; }}
-        
-        .suggestion-box {{
-            padding: 0 4px; font-size: 15px; color: #047857; font-weight: 600; 
-            display: none; align-items: center; gap: 8px; font-family: 'Inter', sans-serif;
-        }}
-        .suggestion-hint {{ color: #94A3B8; font-size: 12px; font-weight: 500; background: #F1F5F9; padding: 3px 6px; border-radius: 4px; }}
+    col_n1, col_n2 = st.columns(2)
+    sel_loc = col_n1.selectbox(
+        "Search Location (Name, Code, Region)", 
+        loc_options,
+        index=0,
+        help="Type to instantly fuzzy-search all available SACC locations."
+    )
+    sel_id = col_n2.text_input("Identifier", placeholder="e.g. Kobe12")
     
-        .tag {{
-            position: absolute; right: 12px; top: 14px; font-size: 11px; padding: 4px 10px;
-            border-radius: 20px; background: #059669; color: #ffffff; font-weight: 700;
-            display: none; letter-spacing: 0.5px; z-index: 3; font-family: 'Inter', sans-serif;
-        }}
-        </style>
-        </head>
-        <body onload="document.getElementById('search').focus()">
-        <div class="container">
-            <div class="input-column">
-                <div class="input-wrapper">
-                    <input type="text" id="search" class="search-input" placeholder="Search by name, code, or region (e.g. Miami)" autocomplete="off" spellcheck="false">
-                    <span id="typeTag" class="tag">MALL</span>
-                </div>
-                <div id="suggestionBox" class="suggestion-box">
-                    <span id="ghostText">Florida Mall</span>
-                    <span class="suggestion-hint">Press Tab or →</span>
-                </div>
-            </div>
-            <div class="input-column">
-                <div class="input-wrapper">
-                    <input type="text" id="identifier" class="search-input" placeholder="Identifier (e.g. Kobe12)">
-                </div>
-            </div>
-            <div>
-                <button id="runBtn" style="height: 52px; padding: 0 24px; font-size: 16px; border: none; border-radius: 8px; background: #10B981; color: white; font-weight: 600; cursor: pointer; font-family: 'Inter', sans-serif; transition: background 0.2s;">▶ Run Renamer</button>
-            </div>
-        </div>
-        <script>
-        const locs = {js_locs};
-        const search = document.getElementById('search');
-        const ghost = document.getElementById('ghostText');
-        const suggestionBox = document.getElementById('suggestionBox');
-        const tag = document.getElementById('typeTag');
-        const identifier = document.getElementById('identifier');
-        let currentMatch = null;
-        
-        function levenshtein(a, b) {{
-            if(a.length === 0) return b.length;
-            if(b.length === 0) return a.length;
-            var matrix = [];
-            for(let i = 0; i <= b.length; i++){{ matrix[i] = [i]; }}
-            for(let j = 0; j <= a.length; j++){{ matrix[0][j] = j; }}
-            for(let i = 1; i <= b.length; i++){{
-                for(let j = 1; j <= a.length; j++){{
-                    if(b.charAt(i-1) == a.charAt(j-1)){{
-                        matrix[i][j] = matrix[i-1][j-1];
-                    }} else {{
-                        matrix[i][j] = Math.min(matrix[i-1][j-1] + 1, Math.min(matrix[i][j-1] + 1, matrix[i-1][j] + 1));
-                    }}
-                }}
-            }}
-            return matrix[b.length][a.length];
-        }}
-    
-        search.addEventListener('input', (e) => {{
-            const val = e.target.value.trim().toLowerCase();
-            currentMatch = null;
-            tag.style.display = 'none';
+    # Store globally active values for execution
+    st.session_state["shared_loc_code"] = sel_loc.split(" — ")[0] if sel_loc else None
+    st.session_state["shared_identifier"] = sel_id
             
-            if (!val) {{ suggestionBox.style.display = 'none'; return; }}
-            
-            let bestMatch = null;
-            let lowestScore = 999;
-            
-            locs.forEach(l => {{
-                const n = l.name.toLowerCase();
-                const c = l.code.toLowerCase();
-                const r = l.region.toLowerCase();
-                
-                let score = 999;
-                
-                if (n.includes(val) || c.includes(val) || r.includes(val)) {{
-                    score = -10; 
-                }} else {{
-                    let distName = levenshtein(val, n.substring(0, val.length));
-                    let distCode = levenshtein(val, c.substring(0, val.length));
-                    let distRegion = levenshtein(val, r.substring(0, val.length));
-                    score = Math.min(distName, distCode, distRegion);
-                }}
-                
-                if (score < lowestScore) {{
-                    lowestScore = score;
-                    bestMatch = l;
-                }}
-            }});
-            
-            // Ensure distance is within reason (up to 3 character typos depending on word length)
-            if (bestMatch && (lowestScore === -10 || lowestScore <= Math.max(2, Math.floor(val.length / 2)))) {{
-                currentMatch = bestMatch;
-                ghost.textContent = `${{bestMatch.code}} — ${{bestMatch.name}}`;
-                tag.textContent = bestMatch.type;
-                
-                suggestionBox.style.display = 'flex';
-                tag.style.display = 'block';
-            }} else {{ 
-                suggestionBox.style.display = 'none'; 
-            }}
-        }});
-        
-        search.addEventListener('keydown', (e) => {{
-            if ((e.key === 'ArrowRight' || e.key === 'Tab') && currentMatch) {{
-                e.preventDefault();
-                search.value = `${{currentMatch.code}} — ${{currentMatch.name}}`;
-                suggestionBox.style.display = 'none';
-            }}
-            if (e.key === 'Enter' && currentMatch) {{
-                e.preventDefault();
-                search.value = `${{currentMatch.code}} — ${{currentMatch.name}}`;
-                suggestionBox.style.display = 'none';
-                identifier.focus();
-            }}
-        }});
-        
-        identifier.addEventListener('keydown', (e) => {{
-            if (e.key === 'Enter' && identifier.value && currentMatch) {{
-                e.preventDefault();
-                parent.window.location.search = `?renamer_trigger=1&loc=${{encodeURIComponent(currentMatch.code)}}&id=${{encodeURIComponent(identifier.value)}}`;
-            }}
-        }});
-        
-        document.getElementById('runBtn').addEventListener('click', () => {{
-            if (identifier.value && currentMatch) {{
-                parent.window.location.search = `?renamer_trigger=1&loc=${{encodeURIComponent(currentMatch.code)}}&id=${{encodeURIComponent(identifier.value)}}`;
-            }} else {{
-                alert('Please select a valid location from the search suggestions and enter an identifier.');
-            }}
-        }});
-        </script>
-        </body>
-        </html>
-        """
-        
-        components.html(html_code, height=90, scrolling=False)
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("▶ Run Batch Renamer", type="primary", use_container_width=True):
+        if not st.session_state.get("shared_loc_code") or not st.session_state.get("shared_identifier"):
+            st.error("Please ensure you have selected a valid location and entered an identifier.")
+        else:
+            st.session_state["native_renamer_trigger"] = True
+            st.session_state["native_loc"] = st.session_state["shared_loc_code"]
+            st.session_state["native_id"] = st.session_state["shared_identifier"]
+            st.rerun()

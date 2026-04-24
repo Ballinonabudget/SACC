@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SACC Wireframes</title>
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #f0ece4; font-family: 'Caveat', cursive; }
+  .sketch-label { font-family: 'Caveat', cursive; font-size: 13px; color: #666; }
+</style>
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="macos-window.jsx"></script>
+</head>
+<body>
+<script type="text/babel">
+
+// ─── Sketch Primitives ──────────────────────────────────────────────────────
+
+const S = {
+  box: (extra={}) => ({
+    border: '2px solid #222',
+    borderRadius: 2,
+    background: '#fff',
+    ...extra,
+  }),
+  dashed: (extra={}) => ({
+    border: '2px dashed #aaa',
+    borderRadius: 2,
+    background: '#fafafa',
+    ...extra,
+  }),
+  pill: (bg='#222', color='#fff', extra={}) => ({
+    background: bg, color, borderRadius: 20, padding: '3px 10px',
+    fontSize: 12, fontFamily: 'Caveat', fontWeight: 700, display:'inline-block',
+    border: '1.5px solid #222', ...extra,
+  }),
+  tab: (active=false) => ({
+    padding: '5px 14px', fontSize: 13, fontFamily: 'Caveat', fontWeight: active ? 700 : 400,
+    borderBottom: active ? '3px solid #222' : '3px solid transparent',
+    color: active ? '#111' : '#888', cursor: 'pointer', whiteSpace:'nowrap',
+  }),
+  sideItem: (active=false) => ({
+    padding: '7px 12px', fontSize: 13, fontFamily: 'Caveat',
+    background: active ? '#222' : 'transparent', color: active ? '#fff' : '#444',
+    borderRadius: 4, cursor:'pointer', marginBottom: 2, fontWeight: active ? 700 : 400,
+  }),
+  img: (w, h, label, bg='#e8e4de') => (
+    <div style={{ width:w, height:h, background:bg, border:'2px solid #bbb',
+      display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+      borderRadius:3, flexShrink:0, position:'relative', overflow:'hidden' }}>
+      {/* diagonal lines */}
+      <svg width={w} height={h} style={{position:'absolute',top:0,left:0,opacity:.25}}>
+        <line x1="0" y1="0" x2={w} y2={h} stroke="#888" strokeWidth="1.5"/>
+        <line x1={w} y1="0" x2="0" y2={h} stroke="#888" strokeWidth="1.5"/>
+      </svg>
+      <span style={{fontSize:10, color:'#888', fontFamily:'Space Mono', textAlign:'center', padding:'0 4px', position:'relative', zIndex:1}}>{label}</span>
+    </div>
+  ),
+  anno: (text, dir='right') => (
+    <div style={{ position:'absolute', ...(dir==='right'?{left:'calc(100% + 8px)'}:{right:'calc(100% + 8px)'}),
+      top:'50%', transform:'translateY(-50%)', whiteSpace:'nowrap',
+      fontSize:11, color:'#e07b30', fontFamily:'Caveat', display:'flex', alignItems:'center', gap:4 }}>
+      {dir==='left' && <span>→</span>}
+      {text}
+      {dir==='right' && <span>←</span>}
+    </div>
+  ),
+};
+
+const Divider = ({vertical, color='#ddd'}) => vertical
+  ? <div style={{width:1, background:color, alignSelf:'stretch'}} />
+  : <div style={{height:1, background:color, width:'100%', margin:'4px 0'}} />;
+
+const Tag = ({children, color='#eee'}) => (
+  <span style={{background:color, border:'1.5px solid #bbb', borderRadius:3,
+    padding:'1px 6px', fontSize:11, fontFamily:'Caveat', marginRight:4, whiteSpace:'nowrap'}}>
+    {children}
+  </span>
+);
+
+const Btn = ({children, primary, small, style={}}) => (
+  <button style={{
+    background: primary ? '#222' : '#fff', color: primary ? '#fff' : '#222',
+    border:'2px solid #222', borderRadius:3, padding: small ? '3px 10px' : '5px 14px',
+    fontFamily:'Caveat', fontSize: small ? 12 : 13, fontWeight:700, cursor:'pointer', ...style
+  }}>{children}</button>
+);
+
+const SearchBar = ({placeholder='Search archive...', width='100%'}) => (
+  <div style={{...S.box(), display:'flex', alignItems:'center', gap:6, padding:'5px 10px', width}}>
+    <span style={{fontSize:14, opacity:.5}}>⌕</span>
+    <span style={{color:'#aaa', fontSize:13, fontFamily:'Caveat'}}>{placeholder}</span>
+    <span style={{marginLeft:'auto', fontSize:10, color:'#bbb', fontFamily:'Space Mono'}}>⌘K</span>
+  </div>
+);
+
+// ─── LAYOUT A: Three-Column ──────────────────────────────────────────────────
+
+function LayoutA() {
+  const sneakers = [
+    {name:'AJ1 Chicago', cw:'Red/White/Black', ts:'0:42'},
+    {name:'Yeezy 350 V2', cw:'Zebra', ts:'2:15'},
+    {name:'Dunk Low', cw:'Panda', ts:'4:08'},
+    {name:'NB 550', cw:'White/Grey', ts:'5:33'},
+    {name:'AJ4 Bred', cw:'Black/Red', ts:'7:22'},
+    {name:'Samba OG', cw:'White/Black', ts:'9:01'},
+  ];
+  return (
+    <MacWindow title="SACC — Sneaker Archive Command Center" width={960} height={620}>
+      {/* Top bar */}
+      <div style={{display:'flex', alignItems:'center', gap:10, padding:'8px 14px',
+        borderBottom:'1.5px solid #ddd', background:'#fafafa'}}>
+        <SearchBar width={280} />
+        <div style={{display:'flex', gap:6, marginLeft:8}}>
+          {['All','Nike','adidas','New Balance','Jordan'].map((f,i) => (
+            <Tag key={f} color={i===0?'#222':undefined}>
+              <span style={{color:i===0?'#fff':undefined}}>{f}</span>
+            </Tag>
+          ))}
+        </div>
+        <div style={{marginLeft:'auto', display:'flex', gap:8}}>
+          <Btn small>+ Import</Btn>
+          <Btn small primary>⚡ Run Script</Btn>
+        </div>
+      </div>
+
+      <div style={{display:'flex', flex:1, overflow:'hidden', height:'calc(100% - 50px)'}}>
+        {/* Sidebar */}
+        <div style={{width:180, borderRight:'1.5px solid #ddd', padding:'12px 10px',
+          background:'#f7f5f1', display:'flex', flexDirection:'column', gap:2}}>
+          <div style={{fontSize:10, color:'#aaa', fontFamily:'Space Mono', marginBottom:6, paddingLeft:4}}>VIEWS</div>
+          {[['▦ Archive', true],['⏱ Timeline',false],['↓ Import Queue',false],['✦ API Fetch',false]].map(([l,a])=>(
+            <div key={l} style={S.sideItem(a)}>{l}</div>
+          ))}
+          <Divider />
+          <div style={{fontSize:10, color:'#aaa', fontFamily:'Space Mono', margin:'6px 0 4px', paddingLeft:4}}>COLLECTIONS</div>
+          {['📁 Nike Retros','📁 adidas Classics','📁 Collabs'].map(l=>(
+            <div key={l} style={S.sideItem(false)}>{l}</div>
+          ))}
+          <div style={{marginTop:'auto'}}>
+            <Divider />
+            <div style={S.sideItem(false)}>⚙ Settings</div>
+          </div>
+        </div>
+
+        {/* Gallery Grid */}
+        <div style={{flex:1, overflow:'auto', padding:14}}>
+          <div style={{fontSize:11, color:'#aaa', fontFamily:'Space Mono', marginBottom:10}}>
+            124 entries · sorted by date ↓
+          </div>
+          <div style={{display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:10}}>
+            {sneakers.map(s => (
+              <div key={s.name} style={{...S.box(), padding:8, cursor:'pointer',
+                background: s.name==='AJ1 Chicago' ? '#f5f0e8' : '#fff',
+                outline: s.name==='AJ1 Chicago' ? '2px solid #222' : 'none'}}>
+                {S.img('100%', 90, 'sneaker photo')}
+                <div style={{marginTop:6}}>
+                  <div style={{fontSize:13, fontWeight:700}}>{s.name}</div>
+                  <div style={{fontSize:11, color:'#888'}}>{s.cw}</div>
+                  <div style={{display:'flex', justifyContent:'space-between', marginTop:4, alignItems:'center'}}>
+                    <Tag>⏱ {s.ts}</Tag>
+                    <span style={{fontSize:10, color:'#bbb', fontFamily:'Space Mono'}}>JSON ✓</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Detail Panel */}
+        <div style={{width:240, borderLeft:'1.5px solid #ddd', padding:14,
+          background:'#fff', overflowY:'auto', display:'flex', flexDirection:'column', gap:10}}>
+          {S.img(212, 130, 'sneaker photo — AJ1 Chicago')}
+          <div>
+            <div style={{fontSize:16, fontWeight:700}}>Air Jordan 1 Chicago</div>
+            <div style={{fontSize:12, color:'#888'}}>Nike · 1985 · Retro 2022</div>
+          </div>
+          <Divider />
+          {[['Colorway','Red/White/Black'],['Retail','$180'],['Release','04/09/2022'],
+            ['File','AJ1_Chicago_2022.mp4'],['Timestamp','0:42']].map(([k,v])=>(
+            <div key={k} style={{display:'flex', justifyContent:'space-between', alignItems:'baseline'}}>
+              <span style={{fontSize:11, color:'#aaa', fontFamily:'Space Mono'}}>{k}</span>
+              <span style={{fontSize:13, fontWeight:600, maxWidth:130, textAlign:'right'}}>{v}</span>
+            </div>
+          ))}
+          <Divider />
+          <div style={{fontSize:11, color:'#aaa', fontFamily:'Space Mono', marginBottom:4}}>JSON PREVIEW</div>
+          <div style={{...S.dashed(), padding:8, fontSize:9, fontFamily:'Space Mono',
+            lineHeight:1.6, color:'#555', borderRadius:4}}>
+            {`{\n  "model": "AJ1",\n  "colorway": "Chicago",\n  "retail": 180,\n  "ts": "0:42"\n}`}
+          </div>
+          <div style={{display:'flex', gap:6, marginTop:'auto'}}>
+            <Btn small style={{flex:1}}>Edit</Btn>
+            <Btn small primary style={{flex:1}}>Export</Btn>
+          </div>
+        </div>
+      </div>
+    </MacWindow>
+  );
+}
+
+// ─── LAYOUT B: Tab-Nav + Slide-in Detail ────────────────────────────────────
+
+function LayoutB() {
+  const items = [
+    {name:'Yeezy 350 Zebra', brand:'adidas', price:'$220', date:'2/25/17', ts:'1:04'},
+    {name:'Dunk Low Panda', brand:'Nike', price:'$110', date:'3/10/21', ts:'3:22'},
+    {name:'AJ1 Bred Toe', brand:'Jordan', price:'$175', date:'11/04/21', ts:'5:40'},
+    {name:'NB 990v5', brand:'NB', price:'$185', date:'6/14/21', ts:'8:17'},
+    {name:'Samba OG', brand:'adidas', price:'$100', date:'1/08/22', ts:'10:55'},
+    {name:'AJ4 Military', brand:'Jordan', price:'$210', date:'9/06/22', ts:'12:30'},
+    {name:'Foam Runner', brand:'adidas', price:'$90', date:'5/18/21', ts:'14:02'},
+    {name:'Kobe 6 Grinch', brand:'Nike', price:'$180', date:'12/24/20', ts:'16:18'},
+  ];
+
+  return (
+    <MacWindow title="SACC" width={960} height={620}>
+      {/* Tab Bar */}
+      <div style={{display:'flex', alignItems:'center', borderBottom:'1.5px solid #ddd',
+        padding:'0 14px', gap:0, background:'#fafafa'}}>
+        {[['▦ Archive', true],['⏱ Timeline',false],['↓ Import',false],['⚙ Settings',false]].map(([l,a])=>(
+          <div key={l} style={S.tab(a)}>{l}</div>
+        ))}
+        <div style={{marginLeft:'auto', display:'flex', gap:8, alignItems:'center'}}>
+          <div style={{fontSize:11, color:'#aaa', fontFamily:'Space Mono'}}>Vortex: <span style={{color:'#4a9e5c'}}>●</span> live</div>
+          <Btn small>+ Import</Btn>
+          <Btn small primary>⚡ Run Script</Btn>
+        </div>
+      </div>
+
+      {/* Search + Filters Row */}
+      <div style={{display:'flex', gap:10, padding:'8px 14px', borderBottom:'1.5px solid #eee',
+        alignItems:'center', background:'#fff'}}>
+        <SearchBar width={300} />
+        <div style={{display:'flex', gap:4}}>
+          {['Brand ▾','Year ▾','Price ▾','Status ▾'].map(f=>(
+            <div key={f} style={{...S.box(), padding:'4px 10px', fontSize:12, cursor:'pointer'}}>{f}</div>
+          ))}
+        </div>
+        <div style={{marginLeft:'auto', display:'flex', gap:4}}>
+          <div style={{...S.box({background:'#222'}), padding:'4px 8px', fontSize:12, color:'#fff', cursor:'pointer'}}>▦</div>
+          <div style={{...S.box(), padding:'4px 8px', fontSize:12, cursor:'pointer'}}>☰</div>
+        </div>
+      </div>
+
+      {/* Main: Gallery + Slide-in */}
+      <div style={{display:'flex', flex:1, overflow:'hidden', height:'calc(100% - 90px)'}}>
+        {/* Gallery */}
+        <div style={{flex:1, overflow:'auto', padding:14}}>
+          <div style={{display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:8}}>
+            {items.map((s,i) => (
+              <div key={s.name} style={{...S.box(), padding:8, cursor:'pointer',
+                outline: i===0 ? '2.5px solid #222' : 'none',
+                background: i===0 ? '#f7f4ef' : '#fff'}}>
+                <div style={{position:'relative'}}>
+                  {S.img('100%', 80, 'photo')}
+                  <div style={{position:'absolute', top:4, right:4,
+                    background:'#222', color:'#fff', borderRadius:2,
+                    padding:'1px 5px', fontSize:9, fontFamily:'Space Mono'}}>⏱ {s.ts}</div>
+                </div>
+                <div style={{marginTop:5}}>
+                  <div style={{fontSize:12, fontWeight:700, lineHeight:1.2}}>{s.name}</div>
+                  <div style={{display:'flex', justifyContent:'space-between', marginTop:3}}>
+                    <span style={{fontSize:10, color:'#888'}}>{s.brand}</span>
+                    <span style={{fontSize:10, color:'#555', fontFamily:'Space Mono'}}>{s.price}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Slide-in Detail */}
+        <div style={{width:260, borderLeft:'2px solid #222', background:'#fafafa',
+          padding:14, display:'flex', flexDirection:'column', gap:8, overflowY:'auto'}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+            <span style={{fontWeight:700, fontSize:14}}>Detail</span>
+            <span style={{fontSize:18, cursor:'pointer', color:'#888'}}>×</span>
+          </div>
+          {S.img('100%', 140, 'Yeezy 350 Zebra')}
+
+          <div style={{fontSize:15, fontWeight:700, marginTop:4}}>Yeezy 350 V2 Zebra</div>
+          <div style={{fontSize:11, color:'#888'}}>adidas · CP9654</div>
+
+          {/* Metadata rows */}
+          <div style={{...S.box({background:'#fff'}), padding:8, display:'flex', flexDirection:'column', gap:5}}>
+            {[['Colorway','White/Core Black'],['Retail','$220'],['Released','Feb 25, 2017'],['File','yeezy_zebra.mp4']].map(([k,v])=>(
+              <div key={k} style={{display:'flex', justifyContent:'space-between'}}>
+                <span style={{fontSize:10, color:'#aaa', fontFamily:'Space Mono'}}>{k}</span>
+                <span style={{fontSize:12, fontWeight:600}}>{v}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Timestamp Marker */}
+          <div style={{...S.dashed({background:'#fffbe8', borderColor:'#d4a847'}), padding:8, borderRadius:3}}>
+            <div style={{fontSize:10, fontFamily:'Space Mono', color:'#888', marginBottom:4}}>VIDEO TIMESTAMP</div>
+            <div style={{display:'flex', alignItems:'center', gap:8}}>
+              <div style={{...S.box({background:'#222'}), color:'#fff', padding:'4px 10px',
+                borderRadius:3, fontSize:14, fontFamily:'Space Mono'}}>▶ 1:04</div>
+              <span style={{fontSize:11, color:'#888'}}>in yeezy_zebra.mp4</span>
+            </div>
+          </div>
+
+          <div style={{...S.dashed(), padding:8, borderRadius:3}}>
+            <div style={{fontSize:10, fontFamily:'Space Mono', color:'#aaa', marginBottom:4}}>JSON</div>
+            <pre style={{fontSize:9, fontFamily:'Space Mono', color:'#555', lineHeight:1.6}}>
+{`{
+  "model": "Yeezy 350 V2",
+  "colorway": "Zebra",
+  "retail": 220,
+  "release": "2017-02-25",
+  "ts": "1:04"
+}`}
+            </pre>
+          </div>
+
+          <div style={{display:'flex', gap:6, marginTop:'auto'}}>
+            <Btn small style={{flex:1}}>✎ Edit</Btn>
+            <Btn small primary style={{flex:1}}>↗ Export</Btn>
+          </div>
+        </div>
+      </div>
+    </MacWindow>
+  );
+}
+
+// ─── LAYOUT C: Dashboard / Command Center ───────────────────────────────────
+
+function LayoutC() {
+  return (
+    <MacWindow title="SACC — Command Center" width={960} height={620}>
+      {/* Header */}
+      <div style={{display:'flex', alignItems:'center', gap:10, padding:'8px 14px',
+        borderBottom:'1.5px solid #ddd', background:'#111', color:'#eee'}}>
+        {[['▦ Archive',false],['⏱ Timeline',false],['↓ Import',true],['⚙ Settings',false]].map(([l,a])=>(
+          <div key={l} style={{...S.tab(a), color: a?'#fff':'#888', borderBottomColor: a?'#fff':'transparent'}}>{l}</div>
+        ))}
+        <div style={{marginLeft:'auto', display:'flex', gap:8, alignItems:'center'}}>
+          <div style={{fontSize:11, color:'#888', fontFamily:'Space Mono'}}>
+            Vortex API <span style={{color:'#4fa85a'}}>● connected</span>
+          </div>
+          <div style={{...S.pill('#4fa85a','#fff'), fontSize:11}}>script: idle</div>
+        </div>
+      </div>
+
+      {/* 3-panel dashboard */}
+      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:0, height:'calc(100% - 44px)'}}>
+
+        {/* Panel 1: Import Queue */}
+        <div style={{borderRight:'1.5px solid #ddd', padding:12, display:'flex', flexDirection:'column', gap:8, overflowY:'auto'}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+            <span style={{fontSize:13, fontWeight:700}}>↓ Import Queue</span>
+            <Btn small>+ Add Files</Btn>
+          </div>
+          <div style={{...S.dashed(), padding:12, textAlign:'center', borderRadius:4}}>
+            <div style={{fontSize:22, marginBottom:4}}>⊕</div>
+            <div style={{fontSize:12, color:'#888'}}>Drop .mp4 / .mov here</div>
+          </div>
+          {[
+            {file:'jordan1_og.mp4', size:'2.3 GB', status:'ready'},
+            {file:'yeezy_wave.mp4', size:'1.8 GB', status:'processing'},
+            {file:'panda_dunk.mp4', size:'980 MB', status:'done'},
+          ].map(f=>(
+            <div key={f.file} style={{...S.box(), padding:8}}>
+              <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+                <span style={{fontSize:12, fontWeight:700}}>{f.file}</span>
+                <div style={{...S.pill(
+                  f.status==='done'?'#4a9e5c':f.status==='processing'?'#d4a847':'#555',
+                  '#fff'), fontSize:10}}>{f.status}</div>
+              </div>
+              <div style={{fontSize:10, color:'#aaa', fontFamily:'Space Mono', marginTop:3}}>{f.size}</div>
+              {f.status==='processing' && (
+                <div style={{marginTop:6, height:4, background:'#eee', borderRadius:2}}>
+                  <div style={{width:'45%', height:'100%', background:'#d4a847', borderRadius:2}} />
+                </div>
+              )}
+            </div>
+          ))}
+          <Btn primary style={{width:'100%'}}>⚡ Run Naming Script</Btn>
+        </div>
+
+        {/* Panel 2: Vortex API Fetch */}
+        <div style={{borderRight:'1.5px solid #ddd', padding:12, display:'flex', flexDirection:'column', gap:8}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+            <span style={{fontSize:13, fontWeight:700}}>⚡ Vortex API</span>
+            <div style={{fontSize:10, fontFamily:'Space Mono', color:'#4a9e5c'}}>● live</div>
+          </div>
+          <SearchBar placeholder="Search Vortex..." />
+
+          {/* API result card */}
+          <div style={{...S.box({background:'#f9f6f0'}), padding:10, borderRadius:4}}>
+            <div style={{fontSize:11, color:'#aaa', fontFamily:'Space Mono', marginBottom:6}}>FETCHED METADATA</div>
+            {S.img('100%', 80, 'API thumbnail')}
+            <div style={{marginTop:8}}>
+              <div style={{fontWeight:700, fontSize:13}}>Air Jordan 1 OG Chicago</div>
+              {[['SKU','555088-101'],['Colorway','Varsity Red/Wht'],['Retail','$180'],['Release','04/09/22']].map(([k,v])=>(
+                <div key={k} style={{display:'flex', justifyContent:'space-between', marginTop:3}}>
+                  <span style={{fontSize:10, color:'#aaa', fontFamily:'Space Mono'}}>{k}</span>
+                  <span style={{fontSize:12, fontWeight:600}}>{v}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{display:'flex', gap:6, marginTop:8}}>
+              <Btn small style={{flex:1}}>Reject</Btn>
+              <Btn small primary style={{flex:1}}>✓ Confirm &amp; Save</Btn>
+            </div>
+          </div>
+
+          {/* Filename preview */}
+          <div style={{...S.dashed(), padding:8, borderRadius:3}}>
+            <div style={{fontSize:10, color:'#aaa', fontFamily:'Space Mono', marginBottom:4}}>GENERATED FILENAME</div>
+            <div style={{fontSize:11, fontFamily:'Space Mono', color:'#333', wordBreak:'break-all'}}>
+              20220409_AJ1_Chicago_$180_0042.mp4
+            </div>
+          </div>
+        </div>
+
+        {/* Panel 3: Recent + Stats */}
+        <div style={{padding:12, display:'flex', flexDirection:'column', gap:8, overflowY:'auto'}}>
+          <div style={{fontSize:13, fontWeight:700}}>✦ Archive Stats</div>
+          <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:6}}>
+            {[['124','Entries'],['38','Brands'],['14','Pending'],['$18.4k','Total Retail']].map(([n,l])=>(
+              <div key={l} style={{...S.box(), padding:8, textAlign:'center'}}>
+                <div style={{fontSize:22, fontWeight:700}}>{n}</div>
+                <div style={{fontSize:10, color:'#888', fontFamily:'Space Mono'}}>{l}</div>
+              </div>
+            ))}
+          </div>
+
+          <Divider />
+          <div style={{fontSize:12, fontWeight:700}}>Recent Entries</div>
+          {[
+            {name:'Samba OG', ts:'2 min ago'},
+            {name:'NB 550 White', ts:'1 hr ago'},
+            {name:'Dunk Low Panda', ts:'3 hr ago'},
+            {name:'Foam Runner', ts:'Yesterday'},
+          ].map(e=>(
+            <div key={e.name} style={{display:'flex', justifyContent:'space-between', alignItems:'center',
+              padding:'5px 0', borderBottom:'1px solid #eee'}}>
+              <div style={{display:'flex', gap:8, alignItems:'center'}}>
+                {S.img(32, 32, '', '#ede9e2')}
+                <span style={{fontSize:12, fontWeight:600}}>{e.name}</span>
+              </div>
+              <span style={{fontSize:10, color:'#aaa', fontFamily:'Space Mono'}}>{e.ts}</span>
+            </div>
+          ))}
+
+          <Divider />
+          <div style={{fontSize:12, fontWeight:700}}>Script Log</div>
+          <div style={{...S.dashed({background:'#111', borderColor:'#333'}), padding:8,
+            borderRadius:3, flex:1, minHeight:80}}>
+            {['> init archive scan…','> 3 new files detected','> Vortex fetch: OK (3/3)','> renamed: 20220409_AJ1…'].map(l=>(
+              <div key={l} style={{fontSize:9, fontFamily:'Space Mono', color:'#7ae', lineHeight:1.8}}>{l}</div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </MacWindow>
+  );
+}
+
+// ─── LAYOUT D: List-based Timeline View ─────────────────────────────────────
+
+function LayoutD() {
+  const rows = [
+    {name:'Air Jordan 1 Chicago', cw:'Red/White/Black', brand:'Nike', price:'$180', date:'04/09/22', ts:'0:42', file:'jordan1_chicago.mp4', status:'synced'},
+    {name:'Yeezy 350 V2 Zebra', cw:'White/Core Black', brand:'adidas', price:'$220', date:'02/25/17', ts:'1:04', file:'yeezy_zebra.mp4', status:'synced'},
+    {name:'Dunk Low Panda', cw:'White/Black', brand:'Nike', price:'$110', date:'03/10/21', ts:'3:22', file:'dunk_panda.mp4', status:'pending'},
+    {name:'NB 990v5', cw:'White/Grey', brand:'NB', price:'$185', date:'06/14/21', ts:'5:40', file:'nb990_white.mp4', status:'synced'},
+    {name:'AJ4 Bred', cw:'Black/Cement', brand:'Jordan', price:'$210', date:'09/06/22', ts:'8:17', file:'aj4_bred.mp4', status:'error'},
+    {name:'Samba OG', cw:'White/Black/Gum', brand:'adidas', price:'$100', date:'01/08/22', ts:'10:55', file:'samba_og.mp4', status:'pending'},
+  ];
+  const statusColor = {synced:'#4a9e5c', pending:'#d4a847', error:'#c0392b'};
+
+  return (
+    <MacWindow title="SACC — Timeline View" width={960} height={620}>
+      {/* Toolbar */}
+      <div style={{display:'flex', alignItems:'center', gap:8, padding:'7px 14px',
+        borderBottom:'1.5px solid #ddd', background:'#fafafa'}}>
+        {[['▦ Archive',false],['⏱ Timeline',true],['↓ Import',false],['⚙ Settings',false]].map(([l,a])=>(
+          <div key={l} style={S.tab(a)}>{l}</div>
+        ))}
+        <div style={{marginLeft:'auto', display:'flex', gap:8, alignItems:'center'}}>
+          <SearchBar width={220} placeholder="Filter entries…" />
+          <Btn small>Sort ▾</Btn>
+          <Btn small primary>⚡ Sync All</Btn>
+        </div>
+      </div>
+
+      {/* Video scrubber */}
+      <div style={{padding:'8px 14px', borderBottom:'1.5px solid #eee', background:'#fff',
+        display:'flex', alignItems:'center', gap:10}}>
+        <div style={{...S.box({background:'#111'}), color:'#fff', padding:'4px 10px',
+          fontSize:12, fontFamily:'Space Mono', borderRadius:2}}>▶ 0:42</div>
+        <div style={{flex:1, height:6, background:'#eee', borderRadius:3, position:'relative'}}>
+          <div style={{width:'10%', height:'100%', background:'#222', borderRadius:3}} />
+          {/* tick marks for each entry */}
+          {[10, 18, 32, 47, 61, 74].map((pct,i)=>(
+            <div key={i} style={{position:'absolute', left:`${pct}%`, top:-3, width:2, height:12,
+              background:'#d4a847', borderRadius:1}} />
+          ))}
+        </div>
+        <span style={{fontSize:10, color:'#aaa', fontFamily:'Space Mono'}}>18:32 total</span>
+      </div>
+
+      {/* Table */}
+      <div style={{flex:1, overflow:'auto', height:'calc(100% - 88px)'}}>
+        <table style={{width:'100%', borderCollapse:'collapse', fontFamily:'Caveat'}}>
+          <thead>
+            <tr style={{background:'#f7f5f1', borderBottom:'1.5px solid #ddd'}}>
+              {['','Model','Colorway','Brand','Retail','Release','Timestamp','File','Status',''].map((h,i)=>(
+                <th key={i} style={{padding:'6px 10px', textAlign:'left', fontSize:10,
+                  color:'#aaa', fontFamily:'Space Mono', fontWeight:400}}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r,i)=>(
+              <tr key={r.name} style={{borderBottom:'1px solid #eee',
+                background: i===0 ? '#faf7f0' : 'white',
+                outline: i===0 ? '2px solid #ddd' : 'none'}}>
+                <td style={{padding:'6px 10px', width:44}}>
+                  {S.img(36, 32, '')}
+                </td>
+                <td style={{padding:'6px 10px', fontWeight:700, fontSize:13, whiteSpace:'nowrap'}}>{r.name}</td>
+                <td style={{padding:'6px 10px', fontSize:12, color:'#666'}}>{r.cw}</td>
+                <td style={{padding:'6px 10px'}}><Tag>{r.brand}</Tag></td>
+                <td style={{padding:'6px 10px', fontFamily:'Space Mono', fontSize:11}}>{r.price}</td>
+                <td style={{padding:'6px 10px', fontFamily:'Space Mono', fontSize:11}}>{r.date}</td>
+                <td style={{padding:'6px 10px'}}>
+                  <div style={{background:'#222', color:'#fff', padding:'2px 7px', borderRadius:2,
+                    fontFamily:'Space Mono', fontSize:10, display:'inline-block'}}>⏱ {r.ts}</div>
+                </td>
+                <td style={{padding:'6px 10px', fontSize:10, color:'#888', fontFamily:'Space Mono'}}>{r.file}</td>
+                <td style={{padding:'6px 10px'}}>
+                  <div style={{...S.pill(statusColor[r.status],'#fff'), fontSize:10}}>{r.status}</div>
+                </td>
+                <td style={{padding:'6px 10px'}}>
+                  <Btn small>↗</Btn>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </MacWindow>
+  );
+}
+
+// ─── App ─────────────────────────────────────────────────────────────────────
+
+function App() {
+  return (
+    <DesignCanvas title="SACC — Wireframe Explorations">
+      <DCSection id="layouts" title="Layout Explorations">
+        <DCArtboard id="a" label="A · 3-Column (Sidebar + Gallery + Detail)" width={960} height={660}>
+          <div style={{padding:12, display:'flex', flexDirection:'column', gap:12, height:'100%'}}>
+            <div style={{fontSize:12, color:'#e07b30', fontFamily:'Caveat', fontWeight:700}}>
+              Classic macOS three-column: persistent sidebar nav, grid gallery, always-visible detail panel. Best for power users who want everything at a glance.
+            </div>
+            <LayoutA />
+          </div>
+        </DCArtboard>
+        <DCArtboard id="b" label="B · Tab-Nav + Slide-in Detail" width={960} height={660}>
+          <div style={{padding:12, display:'flex', flexDirection:'column', gap:12, height:'100%'}}>
+            <div style={{fontSize:12, color:'#e07b30', fontFamily:'Caveat', fontWeight:700}}>
+              Clean tab bar on top, full-width gallery with contextual slide-in panel on selection. More breathing room for the gallery. Familiar macOS Finder feel.
+            </div>
+            <LayoutB />
+          </div>
+        </DCArtboard>
+        <DCArtboard id="c" label="C · Dashboard / Command Center" width={960} height={660}>
+          <div style={{padding:12, display:'flex', flexDirection:'column', gap:12, height:'100%'}}>
+            <div style={{fontSize:12, color:'#e07b30', fontFamily:'Caveat', fontWeight:700}}>
+              Workflow-centric: import queue, live Vortex API fetch, and stats in one view. Dark header reinforces "command center" feel. Best for active import sessions.
+            </div>
+            <LayoutC />
+          </div>
+        </DCArtboard>
+        <DCArtboard id="d" label="D · Timeline / List View" width={960} height={660}>
+          <div style={{padding:12, display:'flex', flexDirection:'column', gap:12, height:'100%'}}>
+            <div style={{fontSize:12, color:'#e07b30', fontFamily:'Caveat', fontWeight:700}}>
+              Spreadsheet-style list with a video scrubber at top for timestamp navigation. Best for bulk editing/reviewing entries — quick scan across all metadata fields.
+            </div>
+            <LayoutD />
+          </div>
+        </DCArtboard>
+      </DCSection>
+    </DesignCanvas>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+<div id="root"></div>
+</body>
+</html>

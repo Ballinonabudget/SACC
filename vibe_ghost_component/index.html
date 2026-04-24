@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { font-family: 'Inter', sans-serif; margin: 0; padding: 10px; background: transparent; }
+.container { display: flex; gap: 15px; align-items: flex-start; }
+.input-column { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.input-wrapper { position: relative; width: 100%; }
+.search-input { 
+    width: 100%; padding: 14px 18px; font-size: 16px; border: 2px solid #E2E8F0; 
+    border-radius: 8px; background: white; color: #1E293B; outline: none;
+    box-sizing: border-box; transition: border 0.2s; font-family: 'Inter', sans-serif;
+}
+.search-input:focus { border-color: #10B981; box-shadow: 0 4px 6px -1px rgba(16,185,129,0.1); background: #FAFAFA; }
+
+.suggestion-box {
+    padding: 0 4px; font-size: 15px; color: #047857; font-weight: 600; 
+    display: none; align-items: center; gap: 8px; font-family: 'Inter', sans-serif;
+}
+.suggestion-hint { color: #94A3B8; font-size: 12px; font-weight: 500; background: #F1F5F9; padding: 3px 6px; border-radius: 4px; }
+
+.tag {
+    position: absolute; right: 12px; top: 14px; font-size: 11px; padding: 4px 10px;
+    border-radius: 20px; background: #059669; color: #ffffff; font-weight: 700;
+    display: none; letter-spacing: 0.5px; z-index: 3; font-family: 'Inter', sans-serif;
+}
+</style>
+</head>
+<body onload="document.getElementById('search').focus()">
+<div class="container">
+    <div class="input-column">
+        <div class="input-wrapper">
+            <input type="text" id="search" class="search-input" placeholder="Search by name, code, or region (e.g. Miami)" autocomplete="off" spellcheck="false">
+            <span id="typeTag" class="tag">MALL</span>
+        </div>
+        <div id="suggestionBox" class="suggestion-box">
+            <span id="ghostText">Florida Mall</span>
+            <span class="suggestion-hint">Press Tab or →</span>
+        </div>
+    </div>
+    <div class="input-column">
+        <div class="input-wrapper">
+            <input type="text" id="identifier" class="search-input" placeholder="Identifier (e.g. Kobe12)">
+        </div>
+    </div>
+</div>
+
+<script>
+// Streamlit Component Bridge
+function sendMessageToStreamlitClient(type, data) {
+    const outData = Object.assign({
+        isStreamlitMessage: true,
+        type: type,
+    }, data);
+    window.parent.postMessage(outData, "*");
+}
+
+function Streamlit() {}
+
+Streamlit.setComponentValue = function(value) {
+    sendMessageToStreamlitClient("setComponentValue", { value: value });
+};
+
+Streamlit.setFrameHeight = function(height) {
+    sendMessageToStreamlitClient("setFrameHeight", { height: height });
+};
+
+Streamlit.setComponentReady = function() {
+    sendMessageToStreamlitClient("setComponentReady", { apiVersion: 1 });
+};
+
+window.locs = [];
+window.locsInitialized = false;
+
+window.addEventListener("message", function(event) {
+    if (event.data.type === "streamlit:render") {
+        Streamlit.setFrameHeight(90);
+        const args = event.data.args;
+        if (args.locs && !window.locsInitialized) {
+            window.locs = args.locs;
+            window.locsInitialized = true;
+        }
+    }
+});
+
+// App Logic
+const search = document.getElementById('search');
+const ghost = document.getElementById('ghostText');
+const suggestionBox = document.getElementById('suggestionBox');
+const tag = document.getElementById('typeTag');
+const identifier = document.getElementById('identifier');
+let currentMatch = null;
+
+function sendState() {
+    Streamlit.setComponentValue({
+        loc_code: currentMatch ? currentMatch.code : null,
+        loc_full: currentMatch ? `${currentMatch.code} — ${currentMatch.name}` : null,
+        identifier: identifier.value
+    });
+}
+
+function levenshtein(a, b) {
+    if(a.length === 0) return b.length;
+    if(b.length === 0) return a.length;
+    var matrix = [];
+    for(let i = 0; i <= b.length; i++){ matrix[i] = [i]; }
+    for(let j = 0; j <= a.length; j++){ matrix[0][j] = j; }
+    for(let i = 1; i <= b.length; i++){
+        for(let j = 1; j <= a.length; j++){
+            if(b.charAt(i-1) == a.charAt(j-1)){
+                matrix[i][j] = matrix[i-1][j-1];
+            } else {
+                matrix[i][j] = Math.min(matrix[i-1][j-1] + 1, Math.min(matrix[i][j-1] + 1, matrix[i-1][j] + 1));
+            }
+        }
+    }
+    return matrix[b.length][a.length];
+}
+
+search.addEventListener('input', (e) => {
+    const val = e.target.value.trim().toLowerCase();
+    currentMatch = null;
+    tag.style.display = 'none';
+    
+    if (!val) { suggestionBox.style.display = 'none'; sendState(); return; }
+    
+    let bestMatch = null;
+    let lowestScore = 999;
+    
+    window.locs.forEach(l => {
+        const n = l.name.toLowerCase();
+        const c = l.code.toLowerCase();
+        const r = l.region.toLowerCase();
+        
+        let score = 999;
+        
+        if (n.includes(val) || c.includes(val) || r.includes(val)) {
+            score = -10; 
+        } else {
+            let distName = levenshtein(val, n.substring(0, val.length));
+            let distCode = levenshtein(val, c.substring(0, val.length));
+            let distRegion = levenshtein(val, r.substring(0, val.length));
+            score = Math.min(distName, distCode, distRegion);
+        }
+        
+        if (score < lowestScore) {
+            lowestScore = score;
+            bestMatch = l;
+        }
+    });
+    
+    if (bestMatch && (lowestScore === -10 || lowestScore <= Math.max(2, Math.floor(val.length / 2)))) {
+        currentMatch = bestMatch;
+        ghost.textContent = `${bestMatch.code} — ${bestMatch.name}`;
+        tag.textContent = bestMatch.type;
+        
+        suggestionBox.style.display = 'flex';
+        tag.style.display = 'block';
+    } else { 
+        suggestionBox.style.display = 'none'; 
+    }
+    sendState();
+});
+
+search.addEventListener('keydown', (e) => {
+    if ((e.key === 'ArrowRight' || e.key === 'Tab') && currentMatch) {
+        e.preventDefault();
+        search.value = `${currentMatch.code} — ${currentMatch.name}`;
+        suggestionBox.style.display = 'none';
+        sendState();
+    }
+    if (e.key === 'Enter' && currentMatch) {
+        e.preventDefault();
+        search.value = `${currentMatch.code} — ${currentMatch.name}`;
+        suggestionBox.style.display = 'none';
+        identifier.focus();
+        sendState();
+    }
+});
+
+identifier.addEventListener('input', (e) => {
+    sendState();
+});
+
+identifier.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        // Since we removed the "dead element" trigger, pressing Enter just updates state natively.
+        // Python will handle the actual execution trigger from the Streamlit button.
+        sendState();
+    }
+});
+
+// Tell Streamlit we're ready
+Streamlit.setComponentReady();
+Streamlit.setFrameHeight(90);
+</script>
+</body>
+</html>

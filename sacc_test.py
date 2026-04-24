@@ -23,6 +23,10 @@ Usage:
 
   # Rename videos using JSON data as identifier source (no Gemini call)
   python sacc_test.py rename  --folder "/Volumes/Team Bank 12/Sneeaker Solo" --loc FLM
+
+  # Rename raw footage with no JSON — provide identifier directly
+  python sacc_test.py rename  --folder "/Users/miniman/SACC/ingestion_zone" --loc PDM --id "Air Jordan 1 Chicago" --dry-run
+  python sacc_test.py rename  --folder "/Users/miniman/SACC/ingestion_zone" --loc PDM --id "Air Jordan 1 Chicago" --apply
 """
 
 import os
@@ -231,16 +235,27 @@ def mode_search(folder, query):
 
 # ── MODE: rename ──────────────────────────────────────────────────────────────
 
-def mode_rename(folder, loc_code, dry_run=True):
+def mode_rename(folder, loc_code, dry_run=True, identifier=None):
     """
-    Rename video files using JSON records as the identifier source.
+    Rename video files using JSON records as the identifier source, OR using
+    a direct --id string when no JSON records exist (raw footage path).
     No Gemini API call. No compression.
 
     Naming convention: {LOC}-{TYPE}_{YYMMDD}_{Model-clean}_{CamModel}_{orig}{ext}
+
+    Args:
+        folder     : source folder containing video files
+        loc_code   : SACC location code (e.g. PDM, FLM)
+        dry_run    : if True, preview only — no files changed
+        identifier : shoe name override (e.g. "Air Jordan 1 Chicago").
+                     When provided, ALL videos in folder are renamed using
+                     this string as the identifier, bypassing JSON lookup.
     """
     print(f"\n{'='*60}")
     print(f"RENAME{' (DRY RUN)' if dry_run else ''}: {folder}")
-    print(f"Location: {loc_code}")
+    print(f"Location : {loc_code}")
+    if identifier:
+        print(f"Identifier (override): {identifier}")
     print(f"{'='*60}")
 
     if loc_code not in LOCATION_DATA:
@@ -253,9 +268,60 @@ def mode_rename(folder, loc_code, dry_run=True):
 
     json_records, video_files = scan_folder(folder)
 
+    # ── --id override: skip JSON lookup, rename all videos with provided identifier ──
+    if identifier:
+        if not video_files:
+            print("[INFO] No video files found to rename.")
+            return
+        identifier_clean = re.sub(r"\s+", "-", identifier.strip())
+        renamed = []
+        skipped = []
+        print(f"\n── Renaming {len(video_files)} file(s) with identifier '{identifier}' ──")
+        for video_path in sorted(video_files):
+            filename = os.path.basename(video_path)
+            base, ext = os.path.splitext(filename)
+            # Strip existing SACC prefixes — full pattern first, partial fallback
+            full_pat    = r"^([A-Z0-9]+-[A-Z]+_\d{6}_[A-Za-z0-9-]+_[A-Za-z0-9]+_)+"
+            partial_pat = r"^([A-Z0-9]+-[A-Z]+-?[A-Z]*_)+"
+            base_clean  = re.sub(full_pat, "", base)
+            if base_clean == base:
+                base_clean = re.sub(partial_pat, "", base)
+            date_str, cam_model = extract_metadata(video_path)
+            new_name = f"{loc_header}_{date_str}_{identifier_clean}_{cam_model}_{base_clean}{ext}"
+            new_path = os.path.join(folder, new_name)
+            print(f"\n  {'[DRY]' if dry_run else '[RENAME]'}")
+            print(f"    FROM : {filename}")
+            print(f"    TO   : {new_name}")
+            if not dry_run:
+                if os.path.exists(new_path):
+                    print(f"    SKIP : destination already exists")
+                    skipped.append(video_path)
+                else:
+                    os.rename(video_path, new_path)
+                    renamed.append((video_path, new_path))
+                    print(f"    ✓ Done")
+        print(f"\n── Summary ──")
+        if dry_run:
+            print(f"  DRY RUN — {len(video_files)} file(s) would be renamed")
+            print(f"  Re-run with --apply to commit changes")
+        else:
+            print(f"  Renamed : {len(renamed)}")
+            print(f"  Skipped : {len(skipped)}")
+            if renamed:
+                log_path = os.path.join(folder, "sacc_rename_log.json")
+                with open(log_path, "w") as f:
+                    json.dump([
+                        {"from": os.path.basename(src), "to": os.path.basename(dst)}
+                        for src, dst in renamed
+                    ], f, indent=2)
+                print(f"  Log     : {log_path}")
+        return
+
+    # ── JSON-driven path (existing behaviour) ─────────────────────────────────
     if not json_records:
         print("[ERROR] No JSON records found — cannot determine shoe identifiers.")
-        print("  Run 'inspect' mode first to check folder contents.")
+        print("  Either run the pipeline first to generate JSON, or pass --id 'Shoe Name'")
+        print("  to rename directly without JSON lookup.")
         sys.exit(1)
 
     if not video_files:
@@ -285,9 +351,12 @@ def mode_rename(folder, loc_code, dry_run=True):
         filename = os.path.basename(video_path)
         base, ext = os.path.splitext(filename)
 
-        # Strip existing SACC prefixes to avoid double-naming
-        prefix_pat = r"^([A-Z0-9]+-[A-Z]+_\d{6}_[A-Za-z0-9-]+_[A-Za-z0-9]+_)+"
-        base_clean = re.sub(prefix_pat, "", base)
+        # Strip existing SACC prefixes — full pattern first, partial fallback
+        full_pat    = r"^([A-Z0-9]+-[A-Z]+_\d{6}_[A-Za-z0-9-]+_[A-Za-z0-9]+_)+"
+        partial_pat = r"^([A-Z0-9]+-[A-Z]+-?[A-Z]*_)+"
+        base_clean  = re.sub(full_pat, "", base)
+        if base_clean == base:
+            base_clean = re.sub(partial_pat, "", base)
 
         date_str, cam_model = extract_metadata(video_path)
 
@@ -315,7 +384,11 @@ def mode_rename(folder, loc_code, dry_run=True):
         for video_path in unmatched["video"]:
             filename = os.path.basename(video_path)
             base, ext = os.path.splitext(filename)
-            base_clean = re.sub(r"^([A-Z0-9]+-[A-Z]+_\d{6}_[A-Za-z0-9-]+_[A-Za-z0-9]+_)+", "", base)
+            full_pat    = r"^([A-Z0-9]+-[A-Z]+_\d{6}_[A-Za-z0-9-]+_[A-Za-z0-9]+_)+"
+            partial_pat = r"^([A-Z0-9]+-[A-Z]+-?[A-Z]*_)+"
+            base_clean  = re.sub(full_pat, "", base)
+            if base_clean == base:
+                base_clean = re.sub(partial_pat, "", base)
             date_str, cam_model = extract_metadata(video_path)
             new_name = f"{loc_header}_{date_str}_{folder_id}_{cam_model}_{base_clean}{ext}"
             new_path = os.path.join(folder, new_name)
@@ -371,6 +444,9 @@ if __name__ == "__main__":
     p_rename = sub.add_parser("rename", help="Rename videos using JSON IDs (no Gemini)")
     p_rename.add_argument("--folder",    required=True)
     p_rename.add_argument("--loc",       default="FLM", help="Location code e.g. FLM")
+    p_rename.add_argument("--id",        default="",
+                          help="Shoe identifier override (e.g. 'Air Jordan 1 Chicago'). "
+                               "Use when folder has no JSON records (raw footage).")
     p_rename.add_argument("--dry-run",   action="store_true", default=True,
                           help="Preview only — no files changed (default: ON)")
     p_rename.add_argument("--apply",     action="store_true",
@@ -386,4 +462,4 @@ if __name__ == "__main__":
 
     elif args.mode == "rename":
         dry = not args.apply
-        mode_rename(args.folder, args.loc, dry_run=dry)
+        mode_rename(args.folder, args.loc, dry_run=dry, identifier=args.id or None)

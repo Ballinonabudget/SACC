@@ -14,5 +14,12 @@ __pycache__/
 .DS_Store
 *.pyc
 
-# Exclude large dump files
+# Exclude large dump / scraped data files (contain 3rd-party API keys)
 dump.json
+jordan1_og_stockx.json
+*.env
+.env
+
+# Exclude output folders
+Compressed_Files/
+Processed_RAW/

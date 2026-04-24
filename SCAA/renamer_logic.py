@@ -1,5 +1,4 @@
 import os
-import re
 import subprocess
 import json
 import time
@@ -34,49 +33,23 @@ LOCATION_DATA = {
     "KSM": {"name": "Kissimmee (Osceola Pkwy)", "type": "NCS", "region": "Kissimmee"}
 }
 
-def _ffprobe_candidates():
-    """
-    Return ordered list of ffprobe executables to try.
-    Local bundled binary is preferred (matches macOS production).
-    Falls back to system ffprobe so Linux dev / CI environments work too.
-    """
-    local = os.path.join(os.path.dirname(__file__), "ffprobe")
-    candidates = []
-    if os.path.exists(local):
-        candidates.append(local)
-    candidates.append("ffprobe")   # system PATH fallback
-    return candidates
-
-
 def extract_metadata(file_path):
-    """
-    Extract creation date (YYMMDD) and camera model from a video file
-    using ffprobe. Tries the bundled binary first; falls back to the
-    system ffprobe so the function works on both macOS and Linux.
-    """
-    base_args = [
+    ffprobe_path = os.path.join(os.path.dirname(__file__), "ffprobe")
+    if not os.path.exists(ffprobe_path):
+        ffprobe_path = "ffprobe" # Fallback to system path if not found
+
+    cmd = [
+        ffprobe_path,
         "-v", "quiet",
         "-print_format", "json",
         "-show_format",
         "-show_streams",
         "-select_streams", "v:0",
-        file_path,
+        file_path
     ]
 
-    output = None
-    for ffprobe_path in _ffprobe_candidates():
-        try:
-            output = subprocess.check_output(
-                [ffprobe_path] + base_args, stderr=subprocess.STDOUT
-            )
-            break   # success — stop trying
-        except Exception:
-            continue  # binary failed or not found — try next
-
-    if output is None:
-        return datetime.now().strftime('%y%m%d'), "Cam"
-
     try:
+        output = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
         data = json.loads(output.decode('utf-8'))
         
         # Extract Creation Date
@@ -142,16 +115,7 @@ def run_vibe_renamer(folder_path, loc_code, identifier):
         
         date_str, cam = extract_metadata(file_path)
         
-        # Sanitize base_orig by stripping existing SACC standard prefixes.
-        # Full prefix  : LOC-TYPE_YYMMDD_ID_CAM_   e.g. PDM-MALL_241221_Air-Jordan_iPhone15ProMax_
-        # Partial prefix: LOC-TYPE_               e.g. PDM-MALL_  (partially-named files)
-        full_prefix_pat    = r"^([A-Z0-9]+-[A-Z]+_\d{6}_[A-Za-z0-9-]+_[A-Za-z0-9]+_)+"
-        partial_prefix_pat = r"^([A-Z0-9]+-[A-Z]+-?[A-Z]*_)+"
-        base_orig_clean = re.sub(full_prefix_pat, "", base_orig)
-        if base_orig_clean == base_orig:   # full pattern didn't match — try partial
-            base_orig_clean = re.sub(partial_prefix_pat, "", base_orig)
-        
-        new_name = f"{loc_header}_{date_str}_{identifier_clean}_{cam}_{base_orig_clean}{ext}"
+        new_name = f"{loc_header}_{date_str}_{identifier_clean}_{cam}_{base_orig}{ext}"
         new_path = os.path.join(folder_path, new_name)
         
         os.rename(file_path, new_path)

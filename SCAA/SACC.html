@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>SACC — Sneaker Archive Command Center</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; background: #1a1a1c;
+    display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  #root { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #d0ccc5; border-radius: 3px; }
+
+  /* Command palette overlay */
+  #cmd-palette {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+    z-index: 10000; align-items: flex-start; justify-content: center; padding-top: 80px;
+  }
+  #cmd-palette.open { display: flex; }
+  #cmd-box {
+    background: #fff; border-radius: 14px; width: 520px; overflow: hidden;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.4); border: 1px solid #e5e2dc;
+  }
+  #cmd-input {
+    width: 100%; border: none; outline: none; padding: 16px 18px;
+    font-size: 15px; font-family: -apple-system, sans-serif; color: #1c1c1e;
+    background: transparent; border-bottom: 1px solid #e5e2dc;
+  }
+  .cmd-result { padding: 9px 18px; font-size: 13px; cursor: pointer;
+    font-family: -apple-system, sans-serif; color: #1c1c1e; display: flex;
+    justify-content: space-between; align-items: center; }
+  .cmd-result:hover, .cmd-result.active { background: oklch(96% 0.04 45); color: oklch(62% 0.18 45); }
+  .cmd-result-meta { font-size: 10px; color: #9b9792; font-family: 'Space Mono', monospace; }
+  #cmd-footer { padding: 8px 16px; display: flex; gap: 14px; border-top: 1px solid #e5e2dc; }
+  .cmd-hint { font-size: 10px; color: #9b9792; font-family: -apple-system, sans-serif;
+    display: flex; align-items: center; gap: 4px; }
+  .cmd-hint kbd { background: #f5f2ed; border: 1px solid #e5e2dc; border-radius: 3px;
+    padding: 1px 5px; font-size: 9px; font-family: 'Space Mono', monospace; color: #6b6864; }
+
+  /* Tweaks panel */
+  #tweaks-panel {
+    display: none; position: fixed; bottom: 20px; right: 20px;
+    background: #fff; border: 1px solid #e5e2dc; border-radius: 12px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.18); padding: 16px; width: 232px;
+    z-index: 9999; font-family: -apple-system, sans-serif;
+  }
+  #tweaks-panel.visible { display: block; }
+  .tw-label { font-size: 9px; color: #9b9792; font-family: 'Space Mono', monospace;
+    margin-bottom: 5px; letter-spacing: 0.06em; display: block; }
+  .tw-row { margin-bottom: 12px; }
+  .tw-seg { display: flex; background: #f5f2ed; border-radius: 6px; padding: 2px; gap: 2px; }
+  .tw-seg button { flex: 1; border: none; padding: 5px 0; border-radius: 5px;
+    font-size: 11px; font-weight: 600; cursor: pointer; background: transparent;
+    color: #9b9792; transition: all 0.15s; font-family: -apple-system, sans-serif; }
+  .tw-seg button.active { background: #fff; color: #1c1c1e;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+  .tw-title { font-size: 13px; font-weight: 700; color: #1c1c1e; margin-bottom: 14px; }
+</style>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="sacc/data.js?v=3"></script>
+<script type="text/babel" src="sacc/components.jsx?v=3"></script>
+<script type="text/babel" src="sacc/gallery-view.jsx?v=3"></script>
+<script type="text/babel" src="sacc/timeline-view.jsx?v=3"></script>
+<script type="text/babel" src="sacc/import-view.jsx?v=3"></script>
+<script type="text/babel" src="sacc/search-view.jsx?v=3"></script>
+</head>
+<body>
+
+<!-- Command palette -->
+<div id="cmd-palette">
+  <div id="cmd-box">
+    <input id="cmd-input" placeholder="Search archive, jump to view, filter by brand…" autocomplete="off"/>
+    <div id="cmd-results"></div>
+    <div id="cmd-footer">
+      <div class="cmd-hint"><kbd>↑↓</kbd> navigate</div>
+      <div class="cmd-hint"><kbd>↵</kbd> select</div>
+      <div class="cmd-hint"><kbd>←→</kbd> prev/next entry</div>
+      <div class="cmd-hint"><kbd>Esc</kbd> close</div>
+    </div>
+  </div>
+</div>
+
+<!-- Tweaks -->
+<div id="tweaks-panel">
+  <div class="tw-title">Tweaks</div>
+  <div class="tw-row">
+    <span class="tw-label">MODE</span>
+    <div class="tw-seg" id="seg-mode">
+      <button id="tw-pro"  class="active" onclick="applyTweak('mode','pro')">Pro</button>
+      <button id="tw-lite" onclick="applyTweak('mode','lite')">Lite</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="tw-label">DEFAULT VIEW</span>
+    <div class="tw-seg">
+      <button id="tw-gallery"  class="active" onclick="applyTweak('view','gallery')">Gallery</button>
+      <button id="tw-timeline" onclick="applyTweak('view','timeline')">List</button>
+      <button id="tw-import"   onclick="applyTweak('view','import')">Import</button>
+    </div>
+  </div>
+  <div class="tw-row">
+    <span class="tw-label">ACCENT COLOR</span>
+    <div style="display:flex;gap:6px;margin-top:2px;">
+      <div onclick="applyTweak('accent','amber')"  title="Amber"  style="width:22px;height:22px;border-radius:50%;background:oklch(62% 0.18 45);cursor:pointer;border:2px solid #fff;box-shadow:0 0 0 1.5px #e5e2dc;"></div>
+      <div onclick="applyTweak('accent','sky')"    title="Sky"    style="width:22px;height:22px;border-radius:50%;background:oklch(62% 0.18 220);cursor:pointer;border:2px solid #fff;box-shadow:0 0 0 1.5px #e5e2dc;"></div>
+      <div onclick="applyTweak('accent','violet')" title="Violet" style="width:22px;height:22px;border-radius:50%;background:oklch(62% 0.18 290);cursor:pointer;border:2px solid #fff;box-shadow:0 0 0 1.5px #e5e2dc;"></div>
+      <div onclick="applyTweak('accent','green')"  title="Green"  style="width:22px;height:22px;border-radius:50%;background:oklch(62% 0.18 155);cursor:pointer;border:2px solid #fff;box-shadow:0 0 0 1.5px #e5e2dc;"></div>
+    </div>
+  </div>
+</div>
+
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "mode": "pro",
+  "defaultView": "gallery",
+  "accent": "green"
+}/*EDITMODE-END*/;
+
+const ACCENT_MAP = {
+  amber:  'oklch(62% 0.18 45)',
+  sky:    'oklch(62% 0.18 220)',
+  violet: 'oklch(62% 0.18 290)',
+  green:  'oklch(62% 0.18 155)',
+};
+
+const VIEW_LABELS = { gallery: 'Archive', timeline: 'Timeline', import: 'Import', search: 'Search' };
+
+function App() {
+  const P = SACC_PALETTE;
+  const saved = (() => { try { return JSON.parse(localStorage.getItem('sacc_v2') || '{}'); } catch { return {}; } })();
+
+  const [view, setView]           = useState(saved.view || TWEAK_DEFAULTS.defaultView);
+  const [mode, setMode]           = useState(saved.mode || TWEAK_DEFAULTS.mode);
+  const [accent, setAccent]       = useState(saved.accent || TWEAK_DEFAULTS.accent);
+  const [selectedId, setSelectedId] = useState(saved.selectedId || null);
+  const [filters, setFilters]     = useState({ brand: 'All', year: 'All', status: 'All', sort: 'Date ↓' });
+  const [cmdOpen, setCmdOpen]     = useState(false);
+  const [cmdQuery, setCmdQuery]   = useState('');
+  const [cmdIdx, setCmdIdx]       = useState(0);
+  const inputRef = useRef();
+
+  // Persist state
+  useEffect(() => {
+    localStorage.setItem('sacc_v2', JSON.stringify({ view, mode, accent, selectedId }));
+  }, [view, mode, accent, selectedId]);
+
+  // Patch accent into SACC_PALETTE at runtime
+  const accentColor = ACCENT_MAP[accent] || ACCENT_MAP.amber;
+  useEffect(() => {
+    SACC_PALETTE.accent      = accentColor;
+    SACC_PALETTE.accentLight = accentColor.replace('62%', '96%').replace('0.18', '0.04');
+  }, [accent, accentColor]);
+
+  // Expose to tweaks
+  useEffect(() => {
+    window.__saccSetMode   = m  => setMode(m);
+    window.__saccSetView   = v  => setView(v);
+    window.__saccSetAccent = a  => setAccent(a);
+  }, []);
+
+  // Ordered sneakers for ←/→ nav
+  const orderedIds = SACC_DATA.sneakers.map(s => s.id);
+  const curIdx     = orderedIds.indexOf(selectedId);
+
+  // ── Keyboard shortcuts ──────────────────────────────────────────
+  useEffect(() => {
+    const handler = e => {
+      const tag = document.activeElement?.tagName;
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+
+      // ⌘K — open command palette
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setCmdOpen(true);
+        setCmdQuery('');
+        setCmdIdx(0);
+        setTimeout(() => document.getElementById('cmd-input')?.focus(), 50);
+        return;
+      }
+      // Esc — close palette
+      if (e.key === 'Escape') { setCmdOpen(false); return; }
+
+      if (cmdOpen) {
+        if (e.key === 'ArrowDown') { e.preventDefault(); setCmdIdx(i => i + 1); return; }
+        if (e.key === 'ArrowUp')   { e.preventDefault(); setCmdIdx(i => Math.max(0, i - 1)); return; }
+        if (e.key === 'Enter')     { e.preventDefault(); window.__cmdSelect?.(cmdIdx); return; }
+        return;
+      }
+
+      if (typing) return;
+
+      // ← → — navigate entries
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        const next = curIdx < orderedIds.length - 1 ? orderedIds[curIdx + 1] : orderedIds[0];
+        setSelectedId(next);
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        const prev = curIdx > 0 ? orderedIds[curIdx - 1] : orderedIds[orderedIds.length - 1];
+        setSelectedId(prev);
+      }
+      // 1/2/3/4 — switch views
+      if (e.key === '1') setView('gallery');
+      if (e.key === '2') setView('timeline');
+      if (e.key === '3') setView('import');
+      if (e.key === '4') setView('search');
+      // Esc — deselect
+      if (e.key === 'Escape') setSelectedId(null);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [cmdOpen, cmdIdx, curIdx, orderedIds]);
+
+  // ── Command palette results ─────────────────────────────────────
+  const cmdResults = React.useMemo(() => {
+    const q = cmdQuery.toLowerCase();
+    const results = [];
+    // View commands
+    [['Archive (Gallery)', 'gallery'], ['Timeline / List', 'timeline'], ['Import / Rename', 'import']].forEach(([label, v]) => {
+      if (!q || label.toLowerCase().includes(q))
+        results.push({ type: 'view', label, sub: `View · key ${['1','2','3'][['gallery','timeline','import'].indexOf(v)]}`, action: () => { setView(v); setCmdOpen(false); } });
+    });
+    // Archive entries
+    SACC_DATA.sneakers.filter(s =>
+      !q || s.name.toLowerCase().includes(q) || s.sku.toLowerCase().includes(q) ||
+      s.colorway.toLowerCase().includes(q) || s.loc.toLowerCase().includes(q) ||
+      s.silhouette.toLowerCase().includes(q)
+    ).slice(0, 5).forEach(s => {
+      const loc = SACC_DATA.locations[s.loc];
+      results.push({
+        type: 'entry', label: s.name,
+        sub: `${s.sku} · ${s.loc} ${loc?.type} · $${s.retail} · ⏱${s.ts}`,
+        action: () => { setSelectedId(s.id); setView('gallery'); setCmdOpen(false); }
+      });
+    });
+    // Whitelist SKU lookup
+    if (q.length >= 3) {
+      Object.entries(SACC_DATA.whitelist).filter(([sku, w]) =>
+        sku.toLowerCase().includes(q) ||
+        w.colorway_name.toLowerCase().includes(q) ||
+        w.silhouette.toLowerCase().includes(q)
+      ).slice(0, 3).forEach(([sku, w]) => {
+        results.push({
+          type: 'whitelist', label: `${w.silhouette} — ${w.colorway_name}`,
+          sub: `SKU ${sku} · $${w.retail_price} · ${w.release_date}`,
+          action: () => { setView('import'); setCmdOpen(false); }
+        });
+      });
+    }
+    return results;
+  }, [cmdQuery]);
+
+  useEffect(() => { setCmdIdx(0); }, [cmdQuery]);
+  useEffect(() => {
+    window.__cmdSelect = (idx) => { const r = cmdResults[idx]; if (r) r.action(); };
+  }, [cmdResults]);
+
+  const selectedSneaker = SACC_DATA.sneakers.find(s => s.id === selectedId) || null;
+
+  // Viewport sizing
+  const [winSize, setWinSize] = useState({ w: window.innerWidth, h: window.innerHeight });
+  useEffect(() => {
+    const onResize = () => setWinSize({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const appW = Math.min(winSize.w, 1440);
+  const appH = Math.min(winSize.h, 900);
+
+  // Lite mode: only gallery + detail, no import tab
+  const visibleViews = mode === 'lite'
+    ? [{ id: 'gallery', icon: '⊞', label: 'Archive' }, { id: 'timeline', icon: '☰', label: 'Timeline' }, { id: 'search', icon: '⌕', label: 'Search' }]
+    : [{ id: 'gallery', icon: '⊞', label: 'Archive' }, { id: 'timeline', icon: '☰', label: 'Timeline' }, { id: 'import', icon: '↓', label: 'Import' }, { id: 'search', icon: '⌕', label: 'Search' }];
+
+  return (
+    <>
+    {/* Command palette */}
+    {cmdOpen && (
+      <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:10000,
+        display:'flex', alignItems:'flex-start', justifyContent:'center', paddingTop:80 }}
+        onClick={() => setCmdOpen(false)}>
+        <div style={{ background:'#fff', borderRadius:14, width:540, overflow:'hidden',
+          boxShadow:'0 24px 80px rgba(0,0,0,0.4)', border:`1px solid ${P.border}` }}
+          onClick={e => e.stopPropagation()}>
+          <input
+            autoFocus
+            value={cmdQuery}
+            onChange={e => setCmdQuery(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'ArrowDown') { e.preventDefault(); setCmdIdx(i => Math.min(i+1, cmdResults.length-1)); }
+              if (e.key === 'ArrowUp')   { e.preventDefault(); setCmdIdx(i => Math.max(0, i-1)); }
+              if (e.key === 'Enter')     { e.preventDefault(); cmdResults[cmdIdx]?.action(); }
+              if (e.key === 'Escape')    { setCmdOpen(false); }
+            }}
+            placeholder="Search archive, jump to view, filter by brand…"
+            style={{ width:'100%', border:'none', outline:'none', padding:'16px 18px',
+              fontSize:15, fontFamily:'-apple-system, sans-serif', color: P.text,
+              background:'transparent', borderBottom:`1px solid ${P.border}` }}
+          />
+          <div>
+            {cmdResults.length === 0 && (
+              <div style={{ padding:'16px 18px', fontSize:13, color: P.muted,
+                fontFamily:'-apple-system, sans-serif' }}>No results</div>
+            )}
+            {cmdResults.map((r, i) => (
+              <div key={i} onClick={r.action}
+                style={{ padding:'9px 18px', fontSize:13, cursor:'pointer',
+                  display:'flex', justifyContent:'space-between', alignItems:'center',
+                  background: i === cmdIdx ? P.accentLight : 'transparent',
+                  color: i === cmdIdx ? accentColor : P.text,
+                  fontFamily:'-apple-system, sans-serif', fontWeight: i === cmdIdx ? 600 : 400 }}>
+                <span>{r.label}</span>
+                <span style={{ fontSize:10, color: P.muted, fontFamily:'Space Mono, monospace' }}>{r.sub}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ padding:'8px 16px', display:'flex', gap:14, borderTop:`1px solid ${P.border}` }}>
+            {[['↑↓','navigate'],['↵','select'],['←→','prev/next entry'],['Esc','close']].map(([k,l]) => (
+              <div key={k} style={{ fontSize:10, color: P.muted, fontFamily:'-apple-system, sans-serif',
+                display:'flex', alignItems:'center', gap:4 }}>
+                <kbd style={{ background: P.bg, border:`1px solid ${P.border}`, borderRadius:3,
+                  padding:'1px 5px', fontSize:9, fontFamily:'Space Mono, monospace', color: P.textSub }}>
+                  {k}
+                </kbd>
+                {l}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    )}
+
+    <div style={{ width:appW, height:appH, borderRadius:12, overflow:'hidden',
+      display:'flex', flexDirection:'column',
+      boxShadow:'0 0 0 1px rgba(0,0,0,0.3), 0 24px 80px rgba(0,0,0,0.6)' }}>
+
+      {/* Title bar */}
+      <div style={{ height:38, background:'#1e1e20', display:'flex', alignItems:'center',
+        padding:'0 16px', gap:8, flexShrink:0, borderBottom:'1px solid rgba(255,255,255,0.06)',
+        position:'relative' }}>
+        {['#ff5f56','#ffbd2e','#27c93f'].map((c,i) => (
+          <div key={i} style={{ width:12, height:12, borderRadius:'50%', background:c }} />
+        ))}
+        {/* Center */}
+        <div style={{ position:'absolute', left:'50%', transform:'translateX(-50%)',
+          display:'flex', alignItems:'center', gap:8 }}>
+          <span style={{ fontSize:12, fontWeight:700, color:'rgba(255,255,255,0.75)',
+            fontFamily:'-apple-system, sans-serif', letterSpacing:'-0.2px' }}>SACC</span>
+          <span style={{ fontSize:10, color:'rgba(255,255,255,0.25)' }}>—</span>
+          <span style={{ fontSize:11, color:'rgba(255,255,255,0.45)',
+            fontFamily:'-apple-system, sans-serif' }}>{VIEW_LABELS[view]}</span>
+          <span style={{ background: accentColor + '33', color: accentColor,
+            fontSize:9, fontWeight:700, padding:'1px 6px', borderRadius:3,
+            fontFamily:'Space Mono, monospace' }}>{mode.toUpperCase()}</span>
+        </div>
+        {/* ⌘K hint */}
+        <div style={{ marginLeft:'auto', display:'flex', gap:10, alignItems:'center' }}>
+          <div onClick={() => { setCmdOpen(true); setTimeout(() => document.getElementById('cmd-input')?.focus(),50); }}
+            style={{ display:'flex', alignItems:'center', gap:5, cursor:'pointer',
+              background:'rgba(255,255,255,0.06)', borderRadius:5, padding:'3px 9px' }}>
+            <span style={{ fontSize:11, color:'rgba(255,255,255,0.4)', fontFamily:'-apple-system, sans-serif' }}>Search</span>
+            <kbd style={{ fontSize:9, color:'rgba(255,255,255,0.3)', fontFamily:'Space Mono, monospace',
+              background:'rgba(255,255,255,0.06)', borderRadius:3, padding:'1px 4px' }}>⌘K</kbd>
+          </div>
+          <div style={{ fontSize:10, color:'rgba(255,255,255,0.35)', fontFamily:'Space Mono, monospace',
+            display:'flex', alignItems:'center', gap:4 }}>
+            Vortex <span style={{ color:'#27c93f' }}>●</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
+        {/* Sidebar — passes visibleViews for Lite filtering */}
+        <SidebarNav
+          view={view} setView={setView}
+          mode={mode} setMode={setMode}
+          visibleViews={visibleViews}
+          accent={accentColor}
+        />
+
+        {/* Center */}
+        <div style={{ flex:1, overflow:'hidden', display:'flex', flexDirection:'column' }}>
+          {view === 'gallery' && (
+            <GalleryView sneakers={SACC_DATA.sneakers} selectedId={selectedId}
+              onSelect={id => setSelectedId(id === selectedId ? null : id)}
+              filters={filters} setFilters={setFilters} mode={mode} />
+          )}
+          {view === 'timeline' && (
+            <TimelineView sneakers={SACC_DATA.sneakers} selectedId={selectedId}
+              onSelect={id => setSelectedId(id === selectedId ? null : id)}
+              filters={filters} setFilters={setFilters} mode={mode} />
+          )}
+          {view === 'import' && mode === 'pro' && (
+            <ImportView queue={SACC_DATA.queue} log={SACC_DATA.log} mode={mode} />
+          )}
+          {view === 'search' && (
+            <SearchView
+              sneakers={SACC_DATA.sneakers}
+              whitelist={SACC_DATA.whitelist}
+              locations={SACC_DATA.locations}
+              mode={mode}
+              accent={accentColor}
+              onSelectSneaker={id => setSelectedId(id)}
+            />
+          )}
+          {view === 'import' && mode === 'lite' && (
+            <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center',
+              flexDirection:'column', gap:10, color: P.muted, fontFamily:'-apple-system, sans-serif',
+              background: P.bg }}>
+              <span style={{ fontSize:32, opacity:0.25 }}>↓</span>
+              <span style={{ fontSize:13 }}>Import is a Pro feature</span>
+              <Btn primary small onClick={() => setMode('pro')}>Upgrade to Pro</Btn>
+            </div>
+          )}
+        </div>
+
+        {/* Right detail panel — hidden in import */}
+        {view !== 'import' && (
+          <DetailPanel sneaker={selectedSneaker} mode={mode}
+            accent={accentColor}
+            onClose={() => setSelectedId(null)} />
+        )}
+      </div>
+
+      {/* ← → nav hint bar (bottom) */}
+      {selectedSneaker && view !== 'import' && (
+        <div style={{ height:26, background:'#1e1e20', borderTop:'1px solid rgba(255,255,255,0.06)',
+          display:'flex', alignItems:'center', justifyContent:'center', gap:16 }}>
+          <span style={{ fontSize:10, color:'rgba(255,255,255,0.3)', fontFamily:'-apple-system, sans-serif',
+            display:'flex', alignItems:'center', gap:4 }}>
+            <kbd style={{ background:'rgba(255,255,255,0.08)', borderRadius:3, padding:'0 4px',
+              fontFamily:'Space Mono, monospace', fontSize:9 }}>←→</kbd>
+            navigate entries
+          </span>
+          <span style={{ fontSize:10, color:'rgba(255,255,255,0.2)', fontFamily:'Space Mono, monospace' }}>
+            {curIdx + 1} / {SACC_DATA.sneakers.length}
+          </span>
+        </div>
+      )}
+    </div>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+// ── Tweaks wiring ──────────────────────────────────────────────────────────
+window.applyTweak = function(key, val) {
+  if (key === 'mode') {
+    document.getElementById('tw-pro')?.classList.toggle('active', val === 'pro');
+    document.getElementById('tw-lite')?.classList.toggle('active', val === 'lite');
+    window.__saccSetMode?.(val);
+    window.parent.postMessage({ type: '__edit_mode_set_keys', edits: { mode: val } }, '*');
+  }
+  if (key === 'view') {
+    ['gallery','timeline','import'].forEach(v =>
+      document.getElementById('tw-'+v)?.classList.toggle('active', v === val));
+    window.__saccSetView?.(val);
+    window.parent.postMessage({ type: '__edit_mode_set_keys', edits: { defaultView: val } }, '*');
+  }
+  if (key === 'accent') {
+    window.__saccSetAccent?.(val);
+    window.parent.postMessage({ type: '__edit_mode_set_keys', edits: { accent: val } }, '*');
+  }
+};
+
+window.addEventListener('message', e => {
+  if (e.data?.type === '__activate_edit_mode')   document.getElementById('tweaks-panel').classList.add('visible');
+  if (e.data?.type === '__deactivate_edit_mode') document.getElementById('tweaks-panel').classList.remove('visible');
+});
+window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+</script>
+</body>
+</html>
