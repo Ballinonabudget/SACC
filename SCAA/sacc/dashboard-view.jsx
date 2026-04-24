@@ -86,18 +86,26 @@ function DashboardView({ mode, accent, folder, setFolder }) {
 
   // KPI data derived from dbStats
   const s = dbStats?.summary || {};
+  const dupCount = preflightRunning
+    ? '…'
+    : preflightRes && !preflightRes.error
+      ? (preflightRes.duplicate_groups ?? 0)
+      : '—';
+  const dupWarn = typeof dupCount === 'number' && dupCount > 0;
+
   const kpis = [
     { val: s.total_videos  ?? '—', label: 'Total Videos',  accent: false },
     { val: s.paired        ?? '—', label: 'JSON Paired',    accent: true  },
     { val: s.unpaired      ?? '—', label: 'Needs Stage 8',  warn: (s.unpaired > 0) },
     { val: s.loc_confirmed ?? '—', label: 'Loc Confirmed',  success: true },
     { val: s.unknown_loc   ?? '—', label: 'Loc Unknown',    warn: (s.unknown_loc > 0) },
+    { val: dupCount,               label: 'Duplicates',     warn: dupWarn, clean: (!dupWarn && dupCount !== '—') },
   ];
 
   const cardColor = (k) => {
-    if (k.accent)   return P.accent;
-    if (k.success)  return P.success;
-    if (k.warn && k.val > 0) return P.warning;
+    if (k.accent)              return P.accent;
+    if (k.success || k.clean)  return P.success;
+    if (k.warn && k.val > 0)   return P.warning;
     return P.text;
   };
 
@@ -168,8 +176,8 @@ function DashboardView({ mode, accent, folder, setFolder }) {
         </div>
       )}
 
-      {/* KPI cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10 }}>
+      {/* KPI cards — 3×2 grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
         {kpis.map((k, i) => (
           <div key={i} style={{ background: P.panel, border: `1px solid ${P.border}`,
             borderRadius: 10, padding: '14px 16px' }}>
