@@ -41,8 +41,8 @@ function DashboardView({ mode, accent, folder, setFolder }) {
   }, []);
 
   // Load folder stats — auto-triggers preflight on success
-  const loadStats = React.useCallback((pathOverride) => {
-    const f = (pathOverride || folderInput).trim();
+  const loadStats = React.useCallback(() => {
+    const f = folderInput.trim();
     if (!f) return;
     setLoading(true);
     setStatsError('');
@@ -139,7 +139,7 @@ function DashboardView({ mode, accent, folder, setFolder }) {
               background: P.bg, outline: 'none' }}
             placeholder="/Volumes/Team Bank 12/Sneeaker Solo"
           />
-          <Btn onClick={loadStats} disabled={loading}>
+          <Btn onClick={() => loadStats()} disabled={loading}>
             {loading ? '…' : '↺ Refresh'}
           </Btn>
         </div>
