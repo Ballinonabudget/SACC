@@ -6,7 +6,9 @@
 # Double-click this file in Finder to launch everything.
 # ─────────────────────────────────────────────────────────────────────────────
 
-SACC_DIR="$(dirname "$0")"
+# Resolve absolute path to this script's directory regardless of how it's launched
+# (Finder double-click, bash /path/to/script, or bash ./script all work)
+SACC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCAA_DIR="$SACC_DIR/SCAA"
 API_PORT=5174
 UI_PORT=5173
@@ -51,6 +53,9 @@ echo "  │   API →  http://localhost:$API_PORT/api/health     │"
 echo "  │                                                  │"
 echo "  │   Press Control+C to stop both servers          │"
 echo "  └──────────────────────────────────────────────────┘"
+echo ""
+echo "  SACC root : $SACC_DIR"
+echo "  SCAA root : $SCAA_DIR"
 echo ""
 
 # ── Start Flask API backend ──────────────────────────────────────────────────
