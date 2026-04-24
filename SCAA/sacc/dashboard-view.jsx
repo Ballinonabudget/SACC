@@ -1,19 +1,21 @@
-// SACC — Dashboard View
-// Migrated from Streamlit Tab 1: KPI metrics, pre-flight scan, batch pipeline trigger
+// SACC — Dashboard View (v2)
+// Auto-runs duplicate scan on folder load. Proxy Cleaned removed from preflight.
 
 const API = 'http://localhost:5174';
+const DEFAULT_FOLDER = '/Volumes/Team Bank 12/Sneeaker Solo/Sneaker solo Originals';
 
 function DashboardView({ mode, accent, folder, setFolder }) {
   const P = SACC_PALETTE;
-  const [dbStats, setDbStats]     = React.useState(null);
-  const [loading, setLoading]     = React.useState(false);
-  const [preflightRes, setPreflight] = React.useState(null);
+  const [dbStats, setDbStats]       = React.useState(null);
+  const [statsError, setStatsError] = React.useState('');
+  const [loading, setLoading]       = React.useState(false);
+  const [preflightRes, setPreflight]       = React.useState(null);
   const [preflightRunning, setPreflightRunning] = React.useState(false);
-  const [pipelineRes, setPipelineRes] = React.useState(null);
+  const [pipelineRes, setPipelineRes]   = React.useState(null);
   const [pipelineRunning, setPipelineRunning] = React.useState(false);
-  const [pipelineLoc, setPipelineLoc] = React.useState('');
-  const [folderInput, setFolderInput] = React.useState(folder || '/Volumes/Team Bank 12/Sneeaker Solo');
-  const [apiOnline, setApiOnline] = React.useState(null);
+  const [pipelineLoc, setPipelineLoc]   = React.useState('');
+  const [folderInput, setFolderInput]   = React.useState(folder || DEFAULT_FOLDER);
+  const [apiOnline, setApiOnline]       = React.useState(null);
 
   // Check API health on mount
   React.useEffect(() => {
@@ -23,31 +25,51 @@ function DashboardView({ mode, accent, folder, setFolder }) {
       .catch(() => setApiOnline(false));
   }, []);
 
-  // Load folder stats
-  const loadStats = React.useCallback(() => {
-    const f = folderInput.trim();
-    if (!f) return;
-    setLoading(true);
-    fetch(`${API}/api/folder-status?path=${encodeURIComponent(f)}`)
-      .then(r => r.json())
-      .then(d => { setDbStats(d); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, [folderInput]);
-
-  React.useEffect(() => { if (apiOnline) loadStats(); }, [apiOnline]);
-
-  const runPreflight = () => {
+  // Auto-run preflight duplicate scan for a given folder path
+  const runPreflightFor = React.useCallback((path) => {
+    if (!path) return;
     setPreflightRunning(true);
     setPreflight(null);
     fetch(`${API}/api/preflight`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: folderInput }),
+      body: JSON.stringify({ path }),
     })
       .then(r => r.json())
       .then(d => { setPreflight(d); setPreflightRunning(false); })
       .catch(e => { setPreflight({ error: String(e) }); setPreflightRunning(false); });
-  };
+  }, []);
+
+  // Load folder stats — auto-triggers preflight on success
+  const loadStats = React.useCallback((pathOverride) => {
+    const f = (pathOverride || folderInput).trim();
+    if (!f) return;
+    setLoading(true);
+    setStatsError('');
+    setPreflight(null);
+    fetch(`${API}/api/folder-status?path=${encodeURIComponent(f)}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.error || d.fatal) {
+          setStatsError(d.error || d.fatal);
+          setDbStats(null);
+        } else {
+          setDbStats(d);
+          // ── Auto-trigger duplicate scan immediately on folder load ──
+          runPreflightFor(f);
+        }
+        setLoading(false);
+      })
+      .catch(err => {
+        setStatsError(`Could not reach API at ${API} — is the server running? (${err.message})`);
+        setLoading(false);
+      });
+  }, [folderInput, runPreflightFor]);
+
+  React.useEffect(() => { if (apiOnline) loadStats(); }, [apiOnline]);
+
+  // Keep manual button as a re-run option
+  const runPreflight = () => runPreflightFor(folderInput);
 
   const runPipeline = () => {
     setPipelineRunning(true);
@@ -65,12 +87,11 @@ function DashboardView({ mode, accent, folder, setFolder }) {
   // KPI data derived from dbStats
   const s = dbStats?.summary || {};
   const kpis = [
-    { val: s.total_videos  ?? '—', label: 'Total Videos',   accent: false },
-    { val: s.paired        ?? '—', label: 'JSON Paired',     accent: true  },
-    { val: s.unpaired      ?? '—', label: 'Needs Stage 8',   warn: (s.unpaired > 0) },
-    { val: s.loc_confirmed ?? '—', label: 'Loc Confirmed',   success: true },
-    { val: s.unknown_loc   ?? '—', label: 'Loc Unknown',     warn: (s.unknown_loc > 0) },
-    { val: s.proxy_deleted ?? '—', label: 'Proxy Cleaned',   muted: true },
+    { val: s.total_videos  ?? '—', label: 'Total Videos',  accent: false },
+    { val: s.paired        ?? '—', label: 'JSON Paired',    accent: true  },
+    { val: s.unpaired      ?? '—', label: 'Needs Stage 8',  warn: (s.unpaired > 0) },
+    { val: s.loc_confirmed ?? '—', label: 'Loc Confirmed',  success: true },
+    { val: s.unknown_loc   ?? '—', label: 'Loc Unknown',    warn: (s.unknown_loc > 0) },
   ];
 
   const cardColor = (k) => {
@@ -124,6 +145,20 @@ function DashboardView({ mode, accent, folder, setFolder }) {
         </div>
       </div>
 
+      {/* Folder / API error */}
+      {statsError && (
+        <div style={{ background: P.error + '15', border: `1px solid ${P.error}44`,
+          borderRadius: 8, padding: '10px 14px', fontSize: 12,
+          color: P.error, fontFamily: '-apple-system, sans-serif' }}>
+          <strong>✗ Error:</strong> {statsError}
+          {statsError.includes('Folder not found') && (
+            <div style={{ marginTop: 6, fontSize: 11, color: P.muted }}>
+              Check that the NAS volume is mounted: <code style={{ fontFamily: 'Space Mono, monospace' }}>ls "/Volumes/Team Bank 12"</code>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* API offline warning */}
       {apiOnline === false && (
         <div style={{ background: P.error + '15', border: `1px solid ${P.error}44`,
@@ -134,7 +169,7 @@ function DashboardView({ mode, accent, folder, setFolder }) {
       )}
 
       {/* KPI cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10 }}>
         {kpis.map((k, i) => (
           <div key={i} style={{ background: P.panel, border: `1px solid ${P.border}`,
             borderRadius: 10, padding: '14px 16px' }}>
@@ -173,43 +208,57 @@ function DashboardView({ mode, accent, folder, setFolder }) {
         </div>
       )}
 
-      {/* Pre-flight dedup scan */}
+      {/* Pre-Flight Duplicate Scan — auto-runs on folder load */}
       <div style={{ background: P.panel, border: `1px solid ${P.border}`, borderRadius: 10, padding: '14px 16px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-          <div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: P.text, fontFamily: '-apple-system, sans-serif' }}>
-              Pre-Flight Duplicate Scan
+              Duplicate Scan
             </div>
-            <div style={{ fontSize: 11, color: P.muted, fontFamily: '-apple-system, sans-serif', marginTop: 2 }}>
-              Checks for exact-match duplicate video files before batch processing
-            </div>
+            {/* Live status badge */}
+            {preflightRunning && (
+              <span style={{ fontSize: 10, color: P.muted, fontFamily: 'Space Mono, monospace' }}>⟳ scanning…</span>
+            )}
+            {!preflightRunning && preflightRes && !preflightRes.error && (
+              <span style={{
+                fontSize: 10, fontFamily: 'Space Mono, monospace', fontWeight: 700,
+                color: preflightRes.clean ? P.success : P.warning,
+                background: (preflightRes.clean ? P.success : P.warning) + '18',
+                padding: '2px 7px', borderRadius: 4,
+              }}>
+                {preflightRes.clean
+                  ? `✓ CLEAR — 0 duplicates`
+                  : `⚠ ${preflightRes.duplicate_groups} duplicate group${preflightRes.duplicate_groups !== 1 ? 's' : ''} found`}
+              </span>
+            )}
           </div>
-          <Btn onClick={runPreflight} disabled={preflightRunning || !apiOnline}>
-            {preflightRunning ? '⟳ Scanning…' : '⊕ Run Pre-Flight'}
+          <Btn onClick={runPreflight} disabled={preflightRunning || !apiOnline || !dbStats}>
+            ↺ Re-scan
           </Btn>
         </div>
-        {preflightRes && (
-          preflightRes.error
-            ? <div style={{ fontSize: 11, color: P.error }}>{preflightRes.error}</div>
-            : preflightRes.clean
-              ? <div style={{ fontSize: 12, color: P.success, fontFamily: '-apple-system, sans-serif' }}>
-                  ✓ Pre-flight clear — no duplicate footage detected. Safe to start batch.
+        <div style={{ fontSize: 11, color: P.muted, fontFamily: '-apple-system, sans-serif', marginBottom: preflightRes ? 10 : 0 }}>
+          {!preflightRes && !preflightRunning
+            ? 'Runs automatically when a folder is loaded'
+            : preflightRes?.clean
+            ? 'No exact-match duplicate footage detected — safe to start batch processing.'
+            : preflightRunning ? 'Scanning for exact-match duplicates…' : ''}
+        </div>
+        {preflightRes && !preflightRes.clean && !preflightRes.error && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {preflightRes.duplicates?.map((g, i) => (
+              <div key={i} style={{ background: P.warning + '15', borderRadius: 6, padding: '8px 10px' }}>
+                <div style={{ fontSize: 10, color: P.warning, fontFamily: 'Space Mono, monospace', marginBottom: 4 }}>
+                  {g.size_mb} MB — exact match ({g.files.length} copies)
                 </div>
-              : <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ fontSize: 12, color: P.warning, fontWeight: 600, fontFamily: '-apple-system, sans-serif' }}>
-                    ⚠ {preflightRes.duplicate_groups} duplicate group(s) found — review before processing
-                  </div>
-                  {preflightRes.duplicates?.map((g, i) => (
-                    <div key={i} style={{ background: P.warning + '15', borderRadius: 6, padding: '8px 10px' }}>
-                      <div style={{ fontSize: 10, color: P.warning, fontFamily: 'Space Mono, monospace' }}>
-                        {g.size_mb} MB — exact match
-                      </div>
-                      {g.files.map(f => (
-                        <div key={f} style={{ fontSize: 11, color: P.text, fontFamily: 'Space Mono, monospace', marginTop: 2 }}>· {f}</div>
-                      ))}
-                    </div>
-                  ))}
-                </div>
+                {g.files.map(f => (
+                  <div key={f} style={{ fontSize: 11, color: P.text, fontFamily: 'Space Mono, monospace', marginTop: 2 }}>· {f}</div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+        {preflightRes?.error && (
+          <div style={{ fontSize: 11, color: P.error, fontFamily: '-apple-system, sans-serif' }}>✗ {preflightRes.error}</div>
         )}
       </div>
 
