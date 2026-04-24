@@ -327,12 +327,13 @@ if not collection_df.empty:
 # ─────────────────────────────────────────────
 # TABS
 # ─────────────────────────────────────────────
-tab_hud, tab_search, tab_verify, tab_review, tab_renamer = st.tabs([
+tab_hud, tab_search, tab_verify, tab_review, tab_renamer, tab_fcp = st.tabs([
     "Dashboard",
     "Search & Index",
     "Verification View",
     "Architect's Review",
     "Vibe Renamer",
+    "FCP Pipeline",
 ])
 
 # ══════════════════════════════════════════════
@@ -751,6 +752,80 @@ except ImportError:
     def run_vibe_renamer(*args, **kwargs):
         return {"error": "renamer_logic.py not found."}
 
+try:
+    from fcp_namer import LOCATION_DB, build_fcp_name, ClipMeta
+    _FCP_AVAILABLE = True
+except ImportError:
+    LOCATION_DB = {}
+    _FCP_AVAILABLE = False
+
+try:
+    from json_sync_validator import validate_folder, print_report
+    _VALIDATOR_AVAILABLE = True
+except ImportError:
+    _VALIDATOR_AVAILABLE = False
+
+# ── NLP Location Resolver ──────────────────────────────────────────────────────
+# Maps free-text verbal cues → SACC location codes.
+# Supports: exact code, partial name, common shorthand, alias.
+_LOC_ALIASES = {
+    "florida mall": "FLM", "fl mall": "FLM", "flmall": "FLM",
+    "millenia": "MAM", "mall at millenia": "MAM", "millennia": "MAM",
+    "orlando fashion square": "OFS", "fashion square": "OFS", "ofs": "OFS",
+    "west oaks": "WOM", "west oaks mall": "WOM",
+    "vineland": "VLD", "premium outlets": "VLD", "vineland premium": "VLD",
+    "international drive": "IDR", "i drive": "IDR", "idrive": "IDR",
+    "lake buena vista": "LBV", "disney springs": "LBV", "lbv": "LBV",
+    "waterford": "WFL", "waterford lakes": "WFL",
+    "winter garden": "WGN", "winter garden village": "WGN",
+    "marketplace": "OMP", "orlando marketplace": "OMP",
+    "seminole": "SEM", "seminole towne": "SEM",
+    "lakeland": "LKL", "lakeland square": "LKL",
+    "paddock": "PDM", "paddock mall": "PDM", "ocala": "PDM",
+    "tallahassee": "THL", "tally": "THL",
+    "brandon": "BRN", "brandon exchange": "BRN",
+    "international plaza": "INP", "int plaza": "INP", "tampa plaza": "INP",
+    "university mall": "UNM", "university tampa": "UNM",
+    "tampa premium": "TPA", "tampa outlets": "TPA",
+    "hyde park": "HVP", "hyde park village": "HVP",
+    "aventura": "AVE", "aventura mall": "AVE",
+    "lincoln road": "LCN", "lincoln": "LCN",
+    "dolphin": "DOL", "dolphin mall": "DOL",
+    "gainesville": "GVA", "celebration pointe": "GVA",
+    "celebration": "CEL-K", "kissimmee": "CEL-K", "celebration kissimmee": "CEL-K",
+    "osceola": "KSM", "kissimmee osceola": "KSM",
+}
+
+def resolve_location_nlp(text: str) -> tuple:
+    """
+    Parse free-text location input → (code, name, confidence).
+    Returns ("", "", "unresolved") if no match found.
+    """
+    if not text:
+        return ("", "", "unresolved")
+    t = text.strip().lower()
+    # 1. Exact SACC code match (e.g. "PDM", "VLD")
+    upper = t.upper()
+    if upper in LOCATION_DB:
+        entry = LOCATION_DB[upper]
+        return (upper, entry.get("name", upper), "exact")
+    # 2. Alias map
+    if t in _LOC_ALIASES:
+        code = _LOC_ALIASES[t]
+        entry = LOCATION_DB.get(code, {})
+        return (code, entry.get("name", code), "alias")
+    # 3. Partial substring match against alias keys
+    for alias, code in sorted(_LOC_ALIASES.items()):
+        if alias in t or t in alias:
+            entry = LOCATION_DB.get(code, {})
+            return (code, entry.get("name", code), "fuzzy")
+    # 4. Partial match against LOCATION_DB names
+    for code, entry in LOCATION_DB.items():
+        name = entry.get("name", "").lower()
+        if t in name or name in t:
+            return (code, entry.get("name", code), "fuzzy")
+    return ("", "", "unresolved")
+
 import streamlit.components.v1 as components
 
 with tab_renamer:
@@ -853,3 +928,236 @@ with tab_renamer:
             st.session_state["native_loc"] = st.session_state["shared_loc_code"]
             st.session_state["native_id"] = st.session_state["shared_identifier"]
             st.rerun()
+
+
+# ══════════════════════════════════════════════
+# TAB 6 — FCP PIPELINE
+# ══════════════════════════════════════════════
+with tab_fcp:
+    st.markdown("### 🎬 FCP Pipeline — Naming & Location Engine")
+    st.caption("Read/write SACC JSON database · FCP-compliant rename · Location detection · NLP location resolver")
+
+    # ── Folder config ──────────────────────────────────────────────────────────
+    fcp_col1, fcp_col2 = st.columns([7, 3])
+    with fcp_col1:
+        fcp_folder = st.text_input(
+            "Source Folder",
+            value=st.session_state.get("fcp_folder", "/Volumes/Team Bank 12/Sneeaker Solo"),
+            placeholder="/Volumes/Team Bank 12/Sneeaker Solo",
+            help="Path to the SACC output folder containing renamed .mov files and a json/ subfolder.",
+            label_visibility="collapsed",
+        )
+    with fcp_col2:
+        if st.button("📁 Browse", use_container_width=True, key="fcp_browse"):
+            import subprocess
+            cmd = """osascript -e 'tell application (path to frontmost application as text)' \
+                              -e 'set myFolder to choose folder with prompt "Select SACC Output Folder"' \
+                              -e 'return POSIX path of myFolder' -e 'end tell'"""
+            res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            if res.returncode == 0 and res.stdout.strip():
+                st.session_state["fcp_folder"] = res.stdout.strip()
+                st.rerun()
+
+    if fcp_folder != st.session_state.get("fcp_folder"):
+        st.session_state["fcp_folder"] = fcp_folder
+
+    st.markdown("---")
+
+    # ── NLP Location Resolver ──────────────────────────────────────────────────
+    st.markdown("#### 📍 Location Override (NLP)")
+    st.caption("Type anything — code, name, alias, or shorthand. e.g. 'paddock mall', 'vineland', 'PDM'")
+
+    nlp_col1, nlp_col2 = st.columns([7, 3])
+    with nlp_col1:
+        nlp_input = st.text_input(
+            "Location Input",
+            value="",
+            placeholder="e.g. 'Paddock Mall', 'PDM', 'Vineland Premium Outlets'",
+            label_visibility="collapsed",
+            key="nlp_loc_input",
+        )
+    with nlp_col2:
+        nlp_code, nlp_name, nlp_conf = resolve_location_nlp(nlp_input)
+        if nlp_input:
+            if nlp_conf != "unresolved":
+                st.success(f"→ **{nlp_code}** ({nlp_name})  [{nlp_conf}]")
+            else:
+                st.error("No match found. Try a code (PDM) or full name.")
+
+    if nlp_code:
+        st.info(f"Active location override: **{nlp_code}** — will be applied to all UNKNOWN files on rename.")
+
+    st.markdown("---")
+
+    # ── Load SACC JSON database ────────────────────────────────────────────────
+    @st.cache_data(show_spinner=False, ttl=30)
+    def load_sacc_json(folder):
+        """Load all SACC pipeline JSON files from <folder>/json/."""
+        json_dir = os.path.join(folder, "json")
+        if not os.path.isdir(json_dir):
+            return [], json_dir
+        records = []
+        for f in sorted(os.listdir(json_dir)):
+            if not f.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(json_dir, f)) as fh:
+                    data = json.load(fh)
+                data["_json_file"] = f
+                records.append(data)
+            except Exception:
+                pass
+        return records, json_dir
+
+    if st.button("🔄 Load / Refresh Database", key="fcp_load"):
+        st.cache_data.clear()
+
+    records, json_dir_path = load_sacc_json(fcp_folder)
+
+    if not records:
+        st.warning(f"No SACC JSON files found in `{json_dir_path}`. Run Stage 8 (Vertex AI) first, or check the folder path.")
+    else:
+        # ── KPI row ────────────────────────────────────────────────────────────
+        total_r      = len(records)
+        loc_manual   = sum(1 for r in records if r.get("loc_source") == "manual")
+        loc_ai       = sum(1 for r in records if r.get("loc_code_confirmed"))
+        loc_unknown  = sum(1 for r in records if not r.get("loc_code_confirmed"))
+        proxy_done   = sum(1 for r in records if r.get("proxy_deleted") is True)
+
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Total Records",   total_r)
+        m2.metric("● Manual Loc",   loc_manual)
+        m3.metric("◉ AI Confirmed", loc_ai)
+        m4.metric("○ Unknown Loc",  loc_unknown,
+                  delta=f"-{loc_unknown} need Stage 10" if loc_unknown else None,
+                  delta_color="inverse")
+        m5.metric("Proxy Deleted",  proxy_done)
+
+        st.markdown("---")
+
+        # ── Database table ─────────────────────────────────────────────────────
+        st.markdown("#### 📋 JSON Database")
+
+        _LOC_CONF_COLOR = {
+            "high":   "#34c759",
+            "medium": "#f5a623",
+            "low":    "#ff6b35",
+            "":       "#8e8e93",
+        }
+
+        def _loc_badge(r):
+            code = r.get("loc_code_confirmed", "")
+            src  = r.get("loc_source", "")
+            conf = r.get("Location_Confidence", "")
+            if src == "manual":
+                return f"● {code}" if code else "● manual"
+            if code:
+                return f"◉ {code} [{conf}]"
+            return "○ UNKNOWN"
+
+        def _fcp_filename(r):
+            code      = r.get("loc_code_confirmed", "")
+            src       = r.get("loc_source", "")
+            orig      = r.get("original_file", r.get("_json_file", ""))
+            analysed  = r.get("analysed_at", "")[:10].replace("-", "") if r.get("analysed_at") else ""
+            cam       = ""  # not stored in JSON currently
+            if not code and src == "manual":
+                code = r.get("loc_code", "")
+            custom = f"{code}-{LOCATION_DB.get(code, {}).get('type', 'LOC')}" if code else "UNKNOWN"
+            stem_  = os.path.splitext(orig)[0]
+            ext_   = os.path.splitext(orig)[1] or ".mov"
+            return f"{custom}_{analysed}_{stem_}{ext_}"
+
+        rows = []
+        for r in records:
+            rows.append({
+                "FCP Filename":     _fcp_filename(r),
+                "Model":            r.get("Model", ""),
+                "SKU":              r.get("SKU", ""),
+                "Location":         _loc_badge(r),
+                "Loc Visual":       (r.get("Location_Visual", "") or "")[:50],
+                "Loc Audio":        (r.get("Location_Audio", "") or "")[:50],
+                "Analysed At":      (r.get("analysed_at", "") or "")[:19],
+                "Proxy Deleted":    "✓" if r.get("proxy_deleted") else "—",
+            })
+
+        fcp_df = pd.DataFrame(rows)
+
+        # Filter
+        fcp_search = st.text_input("Filter records", placeholder="Model, SKU, location code…", label_visibility="collapsed")
+        if fcp_search:
+            mask = fcp_df.apply(
+                lambda col: col.astype(str).str.contains(fcp_search, case=False, na=False)
+            ).any(axis=1)
+            fcp_df = fcp_df[mask]
+
+        loc_filter = st.radio("Location status", ["All", "◉ AI confirmed", "● Manual", "○ Unknown"],
+                              horizontal=True, key="fcp_loc_filter")
+        if loc_filter == "◉ AI confirmed":
+            fcp_df = fcp_df[fcp_df["Location"].str.startswith("◉")]
+        elif loc_filter == "● Manual":
+            fcp_df = fcp_df[fcp_df["Location"].str.startswith("●")]
+        elif loc_filter == "○ Unknown":
+            fcp_df = fcp_df[fcp_df["Location"].str.startswith("○")]
+
+        st.dataframe(fcp_df, hide_index=True, use_container_width=True)
+
+        csv_fcp = fcp_df.to_csv(index=False).encode("utf-8")
+        st.download_button("⬇️ Export FCP Database CSV", csv_fcp, "sacc_fcp_database.csv", "text/csv")
+
+        st.markdown("---")
+
+        # ── Apply location override ────────────────────────────────────────────
+        if nlp_code:
+            st.markdown(f"#### Apply Location Override: **{nlp_code}** → UNKNOWN files")
+            unknown_records = [r for r in records if not r.get("loc_code_confirmed")]
+            st.caption(f"{len(unknown_records)} UNKNOWN records will be updated to {nlp_code}")
+
+            if st.button(f"✏️ Write {nlp_code} → {len(unknown_records)} UNKNOWN JSON records", key="fcp_apply_loc"):
+                updated = 0
+                for r in unknown_records:
+                    jf_path = os.path.join(json_dir_path, r["_json_file"])
+                    try:
+                        with open(jf_path) as fh:
+                            payload = json.load(fh)
+                        payload["loc_code_confirmed"]  = nlp_code
+                        payload["loc_source"]          = "manual"
+                        payload["Location_Confidence"] = "manual"
+                        with open(jf_path, "w") as fh:
+                            json.dump(payload, fh, indent=2)
+                        updated += 1
+                    except Exception as e:
+                        st.error(f"Failed to update {r['_json_file']}: {e}")
+                st.success(f"Updated {updated} JSON records with loc_code_confirmed = {nlp_code}. "
+                           f"Run Stage 10 from Terminal to rename the files:")
+                st.code(f"python3 /Users/miniman/SACC/fcp_namer.py --apply-loc --dest \"{fcp_folder}\"")
+                st.cache_data.clear()
+
+        st.markdown("---")
+
+        # ── JSON Sync Validator ────────────────────────────────────────────────
+        st.markdown("#### 🔬 JSON Sync Health Check")
+        if not _VALIDATOR_AVAILABLE:
+            st.warning("json_sync_validator.py not importable. Run from Terminal instead:")
+            st.code(f'python3 /Users/miniman/SACC/json_sync_validator.py "{fcp_folder}"')
+        else:
+            if st.button("Run Sync Validator", key="fcp_validate"):
+                with st.spinner("Scanning folder…"):
+                    report = validate_folder(fcp_folder)
+                s = report.get("summary", {})
+                v1, v2, v3, v4 = st.columns(4)
+                v1.metric("Total Videos",   s.get("total_videos", 0))
+                v2.metric("Paired",         s.get("paired", 0))
+                v3.metric("Unpaired",       s.get("unpaired", 0),
+                          delta=f"-{s.get('unpaired',0)} need Stage 8" if s.get("unpaired") else None,
+                          delta_color="inverse")
+                v4.metric("UNKNOWN Loc",    s.get("unknown_loc", 0))
+
+                if report.get("errors"):
+                    for e in report["errors"]:
+                        st.error(e)
+                if report.get("warnings"):
+                    for w in report["warnings"]:
+                        st.warning(w)
+                if not report.get("errors") and not report.get("warnings"):
+                    st.success("✓ All videos paired, all fields complete, all locations resolved.")
