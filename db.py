@@ -72,10 +72,15 @@ CREATE TABLE IF NOT EXISTS clips (
     -- Product (from Stage 8 Vertex AI)
     model           TEXT,                   -- e.g. "Air Jordan 1 Retro High OG"
     colorway        TEXT,                   -- e.g. "Chicago"
+    dominant_color  TEXT,                   -- e.g. "Red"
+    secondary_color TEXT,                   -- e.g. "White"
     sku             TEXT,                   -- e.g. "555088-101"
     size            TEXT,
     price           TEXT,
     release_date    TEXT,                   -- product release date YYYY or YYYY-MM-DD
+
+    -- Shot context (affects metadata completeness rules)
+    shot_context    TEXT DEFAULT 'unknown', -- "in_store" | "at_home" | "vlog" | "unknown"
 
     -- Proxy lifecycle
     proxy_file      TEXT,
@@ -164,7 +169,13 @@ class SACCDB:
     def _init_schema(self):
         with self._conn() as conn:
             # Add columns introduced after v1 schema (no-op if already present)
-            for col, defn in [("colorway", "TEXT"), ("release_date", "TEXT")]:
+            for col, defn in [
+                ("colorway",       "TEXT"),
+                ("release_date",   "TEXT"),
+                ("dominant_color", "TEXT"),
+                ("secondary_color","TEXT"),
+                ("shot_context",   "TEXT DEFAULT 'unknown'"),
+            ]:
                 try:
                     conn.execute(f"ALTER TABLE clips ADD COLUMN {col} {defn}")
                 except Exception:
@@ -325,8 +336,9 @@ class SACCDB:
         """Update specific fields on a clip record. Also writes back to JSON."""
         allowed = {
             "loc_code", "loc_name", "loc_source", "loc_confidence",
-            "model", "colorway", "sku", "size", "price", "release_date",
-            "proxy_deleted", "fcp_filename",
+            "model", "colorway", "dominant_color", "secondary_color",
+            "sku", "size", "price", "release_date",
+            "shot_context", "proxy_deleted", "fcp_filename",
         }
         clean = {k: v for k, v in fields.items() if k in allowed}
         if not clean:
@@ -386,6 +398,50 @@ class SACCDB:
             return [dict(r) for r in rows]
 
 
+    def validation_summary(self) -> dict:
+        """Return a completeness tally for every key metadata field."""
+        with self._conn() as conn:
+            row = conn.execute("""
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN sku            IS NOT NULL AND sku            != '' THEN 1 ELSE 0 END) AS has_sku,
+                    SUM(CASE WHEN colorway       IS NOT NULL AND colorway       != '' THEN 1 ELSE 0 END) AS has_colorway,
+                    SUM(CASE WHEN price          IS NOT NULL AND price          != '' THEN 1 ELSE 0 END) AS has_price,
+                    SUM(CASE WHEN release_date   IS NOT NULL AND release_date   != '' THEN 1 ELSE 0 END) AS has_release_date,
+                    SUM(CASE WHEN dominant_color IS NOT NULL AND dominant_color != '' THEN 1 ELSE 0 END) AS has_dominant_color,
+                    SUM(CASE WHEN model          IS NOT NULL AND model          != '' THEN 1 ELSE 0 END) AS has_model,
+                    SUM(CASE WHEN loc_code       IS NOT NULL AND loc_code       != '' THEN 1 ELSE 0 END) AS has_location,
+                    SUM(CASE WHEN shot_context = 'in_store'  THEN 1 ELSE 0 END) AS ctx_in_store,
+                    SUM(CASE WHEN shot_context = 'at_home'   THEN 1 ELSE 0 END) AS ctx_at_home,
+                    SUM(CASE WHEN shot_context = 'vlog'      THEN 1 ELSE 0 END) AS ctx_vlog,
+                    SUM(CASE WHEN shot_context = 'unknown'   THEN 1 ELSE 0 END) AS ctx_unknown
+                FROM clips
+            """).fetchone()
+            d = dict(row)
+            t = d['total'] or 1
+            return {
+                "total": d['total'],
+                "matched_all":   sum(1 for _ in [0] if d['has_sku'] == d['total']
+                                     and d['has_colorway'] == d['total']
+                                     and d['has_price'] == d['total']),
+                "fields": {
+                    "model":         {"count": d['has_model'],        "missing": d['total'] - d['has_model'],        "pct": round(100*d['has_model']/t)},
+                    "sku":           {"count": d['has_sku'],          "missing": d['total'] - d['has_sku'],          "pct": round(100*d['has_sku']/t)},
+                    "colorway":      {"count": d['has_colorway'],     "missing": d['total'] - d['has_colorway'],     "pct": round(100*d['has_colorway']/t)},
+                    "price":         {"count": d['has_price'],        "missing": d['total'] - d['has_price'],        "pct": round(100*d['has_price']/t)},
+                    "release_date":  {"count": d['has_release_date'], "missing": d['total'] - d['has_release_date'], "pct": round(100*d['has_release_date']/t)},
+                    "dominant_color":{"count": d['has_dominant_color'],"missing":d['total'] - d['has_dominant_color'],"pct": round(100*d['has_dominant_color']/t)},
+                    "location":      {"count": d['has_location'],     "missing": d['total'] - d['has_location'],     "pct": round(100*d['has_location']/t)},
+                },
+                "shot_context": {
+                    "in_store": d['ctx_in_store'],
+                    "at_home":  d['ctx_at_home'],
+                    "vlog":     d['ctx_vlog'],
+                    "unknown":  d['ctx_unknown'],
+                },
+            }
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _json_to_row(data: dict, stem: str, jpath: str, folder: str) -> dict:
@@ -424,12 +480,15 @@ def _json_to_row(data: dict, stem: str, jpath: str, folder: str) -> dict:
         "loc_confidence":data.get("Location_Confidence", ""),
         "loc_visual":    data.get("Location_Visual", ""),
         "loc_audio":     data.get("Location_Audio", ""),
-        "model":         data.get("Model", ""),
-        "colorway":      data.get("colorway", "") or data.get("colorway_name", ""),
-        "sku":           data.get("SKU", ""),
+        "model":          data.get("Model", ""),
+        "colorway":       data.get("colorway", "") or data.get("colorway_name", ""),
+        "dominant_color": data.get("dominant_color", ""),
+        "secondary_color":data.get("secondary_color", ""),
+        "sku":            data.get("SKU", ""),
         "size":          data.get("Size", ""),
         "price":         data.get("Price", ""),
         "release_date":  data.get("release_date", "") or data.get("_raw_release", ""),
+        "shot_context":  data.get("shot_context", "unknown"),
         "proxy_file":    data.get("proxy_file", ""),
         "proxy_deleted": 1 if data.get("proxy_deleted") else 0,
         "analysed_at":   data.get("analysed_at", ""),

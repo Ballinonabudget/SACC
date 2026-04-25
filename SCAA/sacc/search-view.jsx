@@ -18,6 +18,7 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
   const [sortDir,     setSortDir]     = React.useState('desc');
   const [selected,       setSelected]       = React.useState(null);
   const [hideLocWarning, setHideLocWarning] = React.useState(false);
+  const [colorFilter,    setColorFilter]    = React.useState('All');
 
   // ── Live API search state ─────────────────────────────────────────────────────
   const [liveResults,  setLiveResults]  = React.useState(null);  // null = not loaded yet
@@ -50,13 +51,18 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
               name:           r.model   || r.stem,
               sku:            r.sku     || '',
               colorway:       r.colorway || '',
-              release:        r.release_date || r.shoot_date || r.analysed_at?.slice(0,10) || '',
+              dominantColor:  r.dominant_color  || '',
+              secondaryColor: r.secondary_color || '',
+              // release = product retail date only; analysed_at is stored separately
+              release:        r.release_date || r.shoot_date || '',
+              uploadDate:     r.analysed_at?.slice(0, 10) || '',
               retail:         r.price   || 0,
               loc:            r.loc_code || '',
               loc_source:     r.loc_source || 'unknown',
               loc_confidence: r.loc_confidence || '',
               loc_visual:     r.loc_visual || '',
               loc_audio:      r.loc_audio  || '',
+              shot_context:   r.shot_context || 'unknown',
               status:         r.proxy_deleted ? 'synced' : 'pending',
               camModel:       r.cam_model  || '',
               origFile,
@@ -130,11 +136,15 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
   // ── Metadata completeness ─────────────────────────────────────────────────────
   const metaStatus = (s) => {
     const issues = [];
-    if (!s.sku)                         issues.push('SKU');
-    if (!s.colorway)                    issues.push('Colorway');
-    if (!s.release)                     issues.push('Date');
-    if (!s.retail)                      issues.push('Price');
-    if (!hideLocWarning && (s.loc_source === 'unknown' || !s.loc)) issues.push('Location');
+    if (!s.sku)      issues.push('SKU');
+    if (!s.colorway) issues.push('Colorway');
+    if (!s.release)  issues.push('Date');
+    if (!s.retail)   issues.push('Price');
+    // Location is only mandatory for in-store footage; at_home/vlog clips don't need it
+    const locMandatory = !hideLocWarning
+      && s.shot_context !== 'at_home'
+      && s.shot_context !== 'vlog';
+    if (locMandatory && (s.loc_source === 'unknown' || !s.loc)) issues.push('Location');
     if (!issues.length) return { label: 'Complete', dot: P.success };
     if (issues.length <= 2) return { label: `Missing: ${issues.join(', ')}`, dot: P.warning };
     return { label: `Incomplete (${issues.length})`, dot: P.error };
@@ -173,6 +183,9 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
     if (statusFilter !== 'All') rows = rows.filter(s => s.status === statusFilter);
     if (locFilter    !== 'All') rows = rows.filter(s => s.loc    === locFilter);
     if (locSrcFilter !== 'All') rows = rows.filter(s => s.loc_source === locSrcFilter);
+    if (colorFilter  !== 'All') rows = rows.filter(s =>
+      s.dominantColor === colorFilter || s.secondaryColor === colorFilter
+    );
 
     rows.sort((a, b) => {
       let av, bv;
@@ -345,6 +358,48 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
           </span>
         </div>
 
+        {/* Color filter */}
+        {(() => {
+          const PALETTE = [
+            { label:'Black',  hex:'#1c1c1e' }, { label:'White',  hex:'#e5e2dc' },
+            { label:'Red',    hex:'#ff3b30' }, { label:'Blue',   hex:'#007aff' },
+            { label:'Grey',   hex:'#8e8e93' }, { label:'Green',  hex:'#34c759' },
+            { label:'Yellow', hex:'#ffd60a' }, { label:'Orange', hex:'#ff9500' },
+            { label:'Purple', hex:'#bf5af2' }, { label:'Brown',  hex:'#a2845e' },
+            { label:'Tan',    hex:'#c9a96e' }, { label:'Navy',   hex:'#1d3461' },
+            { label:'Gold',   hex:'#d4af37' }, { label:'Silver', hex:'#c0c0c0' },
+            { label:'Pink',   hex:'#ff375f' },
+          ];
+          return (
+            <div style={{ display:'flex', gap:5, marginTop:6, alignItems:'center', flexWrap:'wrap' }}>
+              <span style={{ fontSize:10, color:P.muted, fontFamily:'Space Mono, monospace', marginRight:2 }}>COLOR</span>
+              <span onClick={() => setColorFilter('All')}
+                style={{ ...chipStyle(colorFilter === 'All'), fontSize:9, padding:'2px 8px' }}>
+                All
+              </span>
+              {PALETTE.map(({ label, hex }) => {
+                const active = colorFilter === label;
+                return (
+                  <span key={label} onClick={() => setColorFilter(active ? 'All' : label)}
+                    title={label}
+                    style={{
+                      width: 18, height: 18, borderRadius: '50%', cursor: 'pointer',
+                      background: hex, flexShrink: 0,
+                      border: active ? `2px solid ${P.accent}` : `1px solid ${P.border}`,
+                      boxShadow: active ? `0 0 0 2px ${P.accentLight}` : 'none',
+                      transition: 'all 0.12s',
+                    }} />
+                );
+              })}
+              {colorFilter !== 'All' && (
+                <span style={{ fontSize:10, color:P.accent, fontFamily:'-apple-system, sans-serif' }}>
+                  {colorFilter}
+                </span>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Quick chips */}
         <div style={{ display:'flex', gap:5, marginTop:7, flexWrap:'wrap' }}>
           {QUICK.map(q => (
@@ -381,8 +436,8 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
             demo data — set folder in Dashboard to search live index
           </span>
         )}
-        {(statusFilter !== 'All' || locFilter !== 'All' || locSrcFilter !== 'All') && (
-          <span onClick={() => { setStatusFilter('All'); setLocFilter('All'); setLocSrcFilter('All'); }}
+        {(statusFilter !== 'All' || locFilter !== 'All' || locSrcFilter !== 'All' || colorFilter !== 'All') && (
+          <span onClick={() => { setStatusFilter('All'); setLocFilter('All'); setLocSrcFilter('All'); setColorFilter('All'); }}
             style={{ fontSize:10, color:P.accent, cursor:'pointer',
               fontFamily:'-apple-system, sans-serif' }}>Clear filters ×</span>
         )}
@@ -504,10 +559,24 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
                                   {/* Video Preview */}
                                   {s.folderPath && s.origFile && (
                                     <div style={{ flex:'0 0 auto', width:224 }}>
-                                      <div style={{ fontSize:9, color:P.muted,
-                                        fontFamily:'Space Mono, monospace',
-                                        letterSpacing:'0.06em', marginBottom:4 }}>
-                                        PREVIEW
+                                      <div style={{ display:'flex', alignItems:'center',
+                                        justifyContent:'space-between', marginBottom:4 }}>
+                                        <span style={{ fontSize:9, color:P.muted,
+                                          fontFamily:'Space Mono, monospace',
+                                          letterSpacing:'0.06em' }}>PREVIEW</span>
+                                        <button
+                                          onClick={() => fetch(`${API_BASE}/api/reveal`, {
+                                            method:'POST',
+                                            headers:{'Content-Type':'application/json'},
+                                            body: JSON.stringify({ path: s.folderPath, file: s.origFile + s.ext })
+                                          })}
+                                          title="Reveal in Finder — then drag to FCP/Premiere"
+                                          style={{ fontSize:9, padding:'2px 7px', borderRadius:4,
+                                            border:`1px solid ${P.border}`, background:P.bg,
+                                            color:P.textSub, cursor:'pointer',
+                                            fontFamily:'-apple-system, sans-serif' }}>
+                                          ⌘ Reveal
+                                        </button>
                                       </div>
                                       <video
                                         src={`${API_BASE}/api/video?path=${encodeURIComponent(s.folderPath)}&file=${encodeURIComponent(s.origFile + s.ext)}`}
@@ -517,6 +586,22 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
                                           border:`1px solid ${P.border}`,
                                           background:'#000', display:'block' }}
                                       />
+                                      {/* Path chip — shows folder, click to reveal */}
+                                      <div
+                                        onClick={() => fetch(`${API_BASE}/api/reveal`, {
+                                          method:'POST',
+                                          headers:{'Content-Type':'application/json'},
+                                          body: JSON.stringify({ path: s.folderPath })
+                                        })}
+                                        title={s.folderPath}
+                                        style={{ marginTop:5, fontSize:9, color:P.muted,
+                                          fontFamily:'Space Mono, monospace',
+                                          overflow:'hidden', textOverflow:'ellipsis',
+                                          whiteSpace:'nowrap', cursor:'pointer',
+                                          padding:'3px 6px', borderRadius:4,
+                                          border:`1px solid ${P.border}`, background:P.bg }}>
+                                        📁 {s.folderPath.split('/').slice(-2).join('/')}
+                                      </div>
                                     </div>
                                   )}
 
@@ -637,6 +722,76 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
                                         </span>
                                       ))}
                                     </div>
+                                  </div>
+
+                                  {/* Shot context + dates + colors */}
+                                  <div style={{ flex:'1 1 200px', background:P.bg, borderRadius:6,
+                                    border:`1px solid ${P.border}`, padding:'8px 10px' }}>
+                                    <div style={{ fontSize:9, color:P.muted,
+                                      fontFamily:'Space Mono, monospace',
+                                      letterSpacing:'0.06em', marginBottom:6 }}>ASSET CONTEXT</div>
+
+                                    {/* Shot context selector */}
+                                    <div style={{ marginBottom:6 }}>
+                                      <span style={{ fontSize:9, color:P.muted,
+                                        fontFamily:'Space Mono, monospace' }}>SHOT TYPE  </span>
+                                      {['in_store','at_home','vlog','unknown'].map(ctx => (
+                                        <span key={ctx}
+                                          onClick={() => {
+                                            fetch(`${API_BASE}/api/db/record`, {
+                                              method:'PATCH',
+                                              headers:{'Content-Type':'application/json'},
+                                              body: JSON.stringify({ path: s.folderPath, stem: s.id, shot_context: ctx })
+                                            });
+                                          }}
+                                          style={{ marginRight:4, padding:'1px 6px', fontSize:9,
+                                            borderRadius:3, cursor:'pointer',
+                                            fontFamily:'Space Mono, monospace',
+                                            background: s.shot_context === ctx ? P.accentLight : 'transparent',
+                                            color: s.shot_context === ctx ? P.accent : P.muted,
+                                            border:`1px solid ${s.shot_context === ctx ? P.accent : P.border}` }}>
+                                          {ctx.replace('_',' ')}
+                                        </span>
+                                      ))}
+                                    </div>
+
+                                    {/* Date fields — release vs upload */}
+                                    <div style={{ display:'flex', gap:12, marginBottom:6 }}>
+                                      <div>
+                                        <div style={{ fontSize:9, color:P.muted,
+                                          fontFamily:'Space Mono, monospace' }}>RETAIL RELEASE</div>
+                                        <div style={{ fontSize:11, color: s.release ? P.text : P.muted,
+                                          fontFamily:'Space Mono, monospace' }}>
+                                          {s.release || '—'}
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <div style={{ fontSize:9, color:P.muted,
+                                          fontFamily:'Space Mono, monospace' }}>ANALYSED</div>
+                                        <div style={{ fontSize:11, color:P.muted,
+                                          fontFamily:'Space Mono, monospace' }}>
+                                          {s.uploadDate || '—'}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Color badges */}
+                                    {(s.dominantColor || s.secondaryColor) && (
+                                      <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                                        <span style={{ fontSize:9, color:P.muted,
+                                          fontFamily:'Space Mono, monospace' }}>COLORS </span>
+                                        {[s.dominantColor, s.secondaryColor].filter(Boolean).map((c, i) => (
+                                          <span key={c}
+                                            onClick={() => setColorFilter(c)}
+                                            style={{ padding:'2px 8px', fontSize:10, borderRadius:10,
+                                              background:P.accentLight, color:P.accent,
+                                              fontFamily:'-apple-system, sans-serif', cursor:'pointer',
+                                              opacity: i === 1 ? 0.7 : 1 }}>
+                                            {i === 0 ? '●' : '○'} {c}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
                                   </div>
 
                                 </div>

@@ -31,7 +31,7 @@ Endpoints
   GET  /api/db/validate?path=...
 """
 
-import os, sys, json, time, re, hashlib
+import os, sys, json, time, re, hashlib, subprocess
 from pathlib import Path
 from datetime import datetime, timezone
 from collections import defaultdict
@@ -459,8 +459,10 @@ def db_sync():
     if not folder or not os.path.isdir(folder):
         return jsonify({"error": f"Folder not found: {folder}"}), 404
     try:
-        result = _get_db(folder).sync_from_folder(folder)
-        return jsonify({"ok": True, "folder": folder, **result})
+        db     = _get_db(folder)
+        result = db.sync_from_folder(folder)
+        summary = db.validation_summary()
+        return jsonify({"ok": True, "folder": folder, **result, "validation": summary})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -541,6 +543,19 @@ def db_patch_record():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/db/validation-summary")
+def db_validation_summary():
+    if not _DB_OK:
+        return jsonify({"error": "db.py not available"}), 500
+    folder = request.args.get("path", "")
+    if not folder or not os.path.isdir(folder):
+        return jsonify({"error": f"Folder not found: {folder}"}), 404
+    try:
+        return jsonify(_get_db(folder).validation_summary())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/db/validate")
 def db_validate():
     if not _DB_OK:
@@ -563,6 +578,28 @@ def db_validate():
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/reveal", methods=["POST"])
+def reveal_in_finder():
+    """Open the enclosing folder in Finder and select the file (macOS only).
+    Body: { "path": "<folder>", "file": "<filename>" }
+    """
+    body     = request.get_json(silent=True) or {}
+    folder   = body.get("path", "")
+    filename = body.get("file", "")
+    if not folder:
+        return jsonify({"error": "path required"}), 400
+    safe_dir = Path(folder).resolve()
+    if not safe_dir.is_dir():
+        return jsonify({"error": f"Folder not found: {folder}"}), 404
+    if filename:
+        target = (safe_dir / Path(filename).name).resolve()
+        if target.parent == safe_dir and target.is_file():
+            subprocess.Popen(["open", "-R", str(target)])
+            return jsonify({"ok": True, "revealed": str(target)})
+    subprocess.Popen(["open", str(safe_dir)])
+    return jsonify({"ok": True, "opened": str(safe_dir)})
 
 
 @app.route("/api/video")

@@ -14,10 +14,49 @@ Usage:
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
+
+# ── Color extraction ──────────────────────────────────────────────────────────
+
+_COLOR_WORDS = {
+    # Standard colors
+    'black':'Black', 'white':'White', 'red':'Red', 'blue':'Blue',
+    'grey':'Grey', 'gray':'Grey', 'green':'Green', 'yellow':'Yellow',
+    'orange':'Orange', 'purple':'Purple', 'pink':'Pink', 'brown':'Brown',
+    'tan':'Tan', 'navy':'Navy', 'gold':'Gold', 'silver':'Silver',
+    'teal':'Blue', 'mint':'Green', 'olive':'Green', 'khaki':'Tan',
+    'cream':'White', 'beige':'Tan', 'maroon':'Red', 'crimson':'Red',
+    'coral':'Orange', 'aqua':'Blue', 'cobalt':'Blue', 'turquoise':'Blue',
+    'midnight':'Navy', 'copper':'Orange', 'rust':'Orange',
+    # Sneaker-specific terms that map to a canonical color
+    'volt':'Yellow', 'infrared':'Red', 'obsidian':'Navy',
+    'cement':'Grey', 'smoke':'Grey', 'phantom':'Grey', 'wolf':'Grey',
+    'platinum':'Silver', 'metallic':'Silver', 'aurora':'Green',
+    'mocha':'Brown', 'mahogany':'Brown', 'wheat':'Tan', 'linen':'Tan',
+    'sail':'White', 'summit':'White', 'hyper':'Blue',
+    # Iconic colorway nicknames — dominant color only
+    'chicago':'Red', 'bred':'Black', 'royal':'Blue', 'shadow':'Grey',
+    'concord':'Purple', 'banned':'Black',
+}
+
+
+def extract_colors(colorway: str):
+    """Return (dominant_color, secondary_color) derived from colorway text."""
+    if not colorway:
+        return (None, None)
+    tokens = re.split(r'[\s/\-]+', colorway.lower())
+    found = []
+    for tok in tokens:
+        c = _COLOR_WORDS.get(tok)
+        if c and c not in found:
+            found.append(c)
+        if len(found) == 2:
+            break
+    return (found[0] if found else None, found[1] if len(found) > 1 else None)
 
 SOURCE_JSON  = "/Volumes/Team Bank 12/Sneeaker Solo/sneaker_database.json"
 ORIGINALS    = "/Volumes/Team Bank 12/Sneeaker Solo/Sneaker solo Orginals"
@@ -59,33 +98,37 @@ def build_rows(data: dict, originals_dir: str) -> list[dict]:
         sku          = _nonempty(entry.get("style_code"))
         price        = _nonempty(entry.get("retail_price"))
         release_date = _nonempty(entry.get("release_date"))
+        dom, sec     = extract_colors(colorway)
         # When no loc_code, store the new_filename as-is (no UNKNOWN_ prefix)
         fcp          = _nonempty(entry.get("new_filename")) or original_file
 
         rows.append({
-            "stem":          stem,
-            "original_file": original_file,
-            "fcp_filename":  fcp,
-            "folder_path":   originals_dir,
-            "json_path":     None,          # no per-file JSON — source is sneaker_database.json
-            "shoot_date":    "",
-            "cam_make":      "",
-            "cam_model":     "",
-            "loc_code":      "",
-            "loc_name":      "",
-            "loc_source":    "unknown",
+            "stem":           stem,
+            "original_file":  original_file,
+            "fcp_filename":   fcp,
+            "folder_path":    originals_dir,
+            "json_path":      None,
+            "shoot_date":     "",
+            "cam_make":       "",
+            "cam_model":      "",
+            "loc_code":       "",
+            "loc_name":       "",
+            "loc_source":     "unknown",
             "loc_confidence": None,
-            "loc_visual":    None,
-            "loc_audio":     None,
-            "model":         model,
-            "colorway":      colorway or None,
-            "sku":           sku or None,
-            "size":          None,
-            "price":         price or None,
-            "release_date":  release_date or None,
-            "proxy_file":    None,
-            "proxy_deleted": 0,
-            "analysed_at":   _nonempty(entry.get("timestamp")) or None,
+            "loc_visual":     None,
+            "loc_audio":      None,
+            "model":          model,
+            "colorway":       colorway or None,
+            "dominant_color": dom,
+            "secondary_color":sec,
+            "sku":            sku or None,
+            "size":           None,
+            "price":          price or None,
+            "release_date":   release_date or None,
+            "shot_context":   "unknown",
+            "proxy_file":     None,
+            "proxy_deleted":  0,
+            "analysed_at":    _nonempty(entry.get("timestamp")) or None,
         })
 
     return rows
@@ -155,10 +198,14 @@ def main():
     print(f"  ✓ Updated  : {updated}")
     print(f"  ✗ Errors   : {errors}")
 
-    s = db.stats()
-    print(f"\n  DB total clips : {s['total']}")
-    print(f"  Has model      : {s['has_model']}")
-    print(f"  Has SKU        : {s['has_sku']}")
+    v = db.validation_summary()
+    t = v['total']
+    print(f"\n  ── Validation Summary ({'PASS' if v['fields']['sku']['pct'] > 90 else 'GAPS'}) ─────────────")
+    print(f"  Total clips   : {t}")
+    for field, info in v['fields'].items():
+        bar = '█' * (info['pct'] // 10) + '░' * (10 - info['pct'] // 10)
+        flag = '✓' if info['missing'] == 0 else '⚠' if info['pct'] >= 80 else '✗'
+        print(f"  {flag} {field:14} {bar} {info['pct']:3}%  ({info['missing']} missing)")
     print()
 
 
