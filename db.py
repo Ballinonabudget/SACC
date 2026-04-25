@@ -70,10 +70,12 @@ CREATE TABLE IF NOT EXISTS clips (
     loc_audio       TEXT,                   -- AI audio transcript text
 
     -- Product (from Stage 8 Vertex AI)
-    model           TEXT,                   -- e.g. "Air Jordan 1 Retro High OG Chicago"
+    model           TEXT,                   -- e.g. "Air Jordan 1 Retro High OG"
+    colorway        TEXT,                   -- e.g. "Chicago"
     sku             TEXT,                   -- e.g. "555088-101"
     size            TEXT,
     price           TEXT,
+    release_date    TEXT,                   -- product release date YYYY or YYYY-MM-DD
 
     -- Proxy lifecycle
     proxy_file      TEXT,
@@ -91,6 +93,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS clips_fts USING fts5(
     original_file,
     fcp_filename,
     model,
+    colorway,
     sku,
     loc_code,
     loc_name,
@@ -103,27 +106,27 @@ CREATE VIRTUAL TABLE IF NOT EXISTS clips_fts USING fts5(
 
 -- Keep FTS in sync via triggers
 CREATE TRIGGER IF NOT EXISTS clips_ai AFTER INSERT ON clips BEGIN
-    INSERT INTO clips_fts(rowid, stem, original_file, fcp_filename, model, sku,
+    INSERT INTO clips_fts(rowid, stem, original_file, fcp_filename, model, colorway, sku,
         loc_code, loc_name, loc_visual, loc_audio)
-    VALUES (new.id, new.stem, new.original_file, new.fcp_filename, new.model, new.sku,
+    VALUES (new.id, new.stem, new.original_file, new.fcp_filename, new.model, new.colorway, new.sku,
         new.loc_code, new.loc_name, new.loc_visual, new.loc_audio);
 END;
 
 CREATE TRIGGER IF NOT EXISTS clips_ad AFTER DELETE ON clips BEGIN
-    INSERT INTO clips_fts(clips_fts, rowid, stem, original_file, fcp_filename, model, sku,
+    INSERT INTO clips_fts(clips_fts, rowid, stem, original_file, fcp_filename, model, colorway, sku,
         loc_code, loc_name, loc_visual, loc_audio)
-    VALUES ('delete', old.id, old.stem, old.original_file, old.fcp_filename, old.model, old.sku,
+    VALUES ('delete', old.id, old.stem, old.original_file, old.fcp_filename, old.model, old.colorway, old.sku,
         old.loc_code, old.loc_name, old.loc_visual, old.loc_audio);
 END;
 
 CREATE TRIGGER IF NOT EXISTS clips_au AFTER UPDATE ON clips BEGIN
-    INSERT INTO clips_fts(clips_fts, rowid, stem, original_file, fcp_filename, model, sku,
+    INSERT INTO clips_fts(clips_fts, rowid, stem, original_file, fcp_filename, model, colorway, sku,
         loc_code, loc_name, loc_visual, loc_audio)
-    VALUES ('delete', old.id, old.stem, old.original_file, old.fcp_filename, old.model, old.sku,
+    VALUES ('delete', old.id, old.stem, old.original_file, old.fcp_filename, old.model, old.colorway, old.sku,
         old.loc_code, old.loc_name, old.loc_visual, old.loc_audio);
-    INSERT INTO clips_fts(rowid, stem, original_file, fcp_filename, model, sku,
+    INSERT INTO clips_fts(rowid, stem, original_file, fcp_filename, model, colorway, sku,
         loc_code, loc_name, loc_visual, loc_audio)
-    VALUES (new.id, new.stem, new.original_file, new.fcp_filename, new.model, new.sku,
+    VALUES (new.id, new.stem, new.original_file, new.fcp_filename, new.model, new.colorway, new.sku,
         new.loc_code, new.loc_name, new.loc_visual, new.loc_audio);
 END;
 
@@ -160,7 +163,35 @@ class SACCDB:
 
     def _init_schema(self):
         with self._conn() as conn:
+            # Add columns introduced after v1 schema (no-op if already present)
+            for col, defn in [("colorway", "TEXT"), ("release_date", "TEXT")]:
+                try:
+                    conn.execute(f"ALTER TABLE clips ADD COLUMN {col} {defn}")
+                except Exception:
+                    pass
+
+            # Rebuild FTS if colorway column is missing from the index
+            needs_fts_rebuild = False
+            try:
+                conn.execute("SELECT colorway FROM clips_fts LIMIT 1")
+            except Exception:
+                needs_fts_rebuild = True
+
+            if needs_fts_rebuild:
+                conn.executescript("""
+                    DROP TABLE IF EXISTS clips_fts;
+                    DROP TRIGGER IF EXISTS clips_ai;
+                    DROP TRIGGER IF EXISTS clips_ad;
+                    DROP TRIGGER IF EXISTS clips_au;
+                """)
+
             conn.executescript(_DDL)
+
+            if needs_fts_rebuild:
+                try:
+                    conn.execute("INSERT INTO clips_fts(clips_fts) VALUES('rebuild')")
+                except Exception:
+                    pass
 
     # ── Sync from folder ────────────────────────────────────────────────────
 
@@ -283,7 +314,7 @@ class SACCDB:
             ).fetchall()
             return [dict(r) for r in rows]
 
-    def get_by_stem(self, stem: str) -> dict | None:
+    def get_by_stem(self, stem: str):  # -> dict | None
         with self._conn() as conn:
             row = conn.execute("SELECT * FROM clips WHERE stem = ?", (stem,)).fetchone()
             return dict(row) if row else None
@@ -294,7 +325,7 @@ class SACCDB:
         """Update specific fields on a clip record. Also writes back to JSON."""
         allowed = {
             "loc_code", "loc_name", "loc_source", "loc_confidence",
-            "model", "sku", "size", "price",
+            "model", "colorway", "sku", "size", "price", "release_date",
             "proxy_deleted", "fcp_filename",
         }
         clean = {k: v for k, v in fields.items() if k in allowed}
@@ -394,9 +425,11 @@ def _json_to_row(data: dict, stem: str, jpath: str, folder: str) -> dict:
         "loc_visual":    data.get("Location_Visual", ""),
         "loc_audio":     data.get("Location_Audio", ""),
         "model":         data.get("Model", ""),
+        "colorway":      data.get("colorway", "") or data.get("colorway_name", ""),
         "sku":           data.get("SKU", ""),
         "size":          data.get("Size", ""),
         "price":         data.get("Price", ""),
+        "release_date":  data.get("release_date", "") or data.get("_raw_release", ""),
         "proxy_file":    data.get("proxy_file", ""),
         "proxy_deleted": 1 if data.get("proxy_deleted") else 0,
         "analysed_at":   data.get("analysed_at", ""),

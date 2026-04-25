@@ -16,7 +16,8 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
   const [locSrcFilter,setLocSrcFilter]= React.useState('All'); // All | manual | ai_confirmed | unknown
   const [sortBy,      setSortBy]      = React.useState('release');
   const [sortDir,     setSortDir]     = React.useState('desc');
-  const [selected,    setSelected]    = React.useState(null);
+  const [selected,       setSelected]       = React.useState(null);
+  const [hideLocWarning, setHideLocWarning] = React.useState(false);
 
   // ── Live API search state ─────────────────────────────────────────────────────
   const [liveResults,  setLiveResults]  = React.useState(null);  // null = not loaded yet
@@ -38,26 +39,35 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
         if (data.error) { setLiveError(data.error); setLiveResults([]); }
         else {
           // Normalize API record shape → same fields SearchView table expects
-          setLiveResults((data.results || []).map(r => ({
-            id:             r.stem,
-            name:           r.model   || r.stem,
-            sku:            r.sku     || '',
-            colorway:       r.colorway || '',
-            release:        r.shoot_date || r.analysed_at?.slice(0,10) || '',
-            retail:         r.price   || 0,
-            loc:            r.loc_code || '',
-            loc_source:     r.loc_source || 'unknown',
-            loc_confidence: r.loc_confidence || '',
-            loc_visual:     r.loc_visual || '',
-            loc_audio:      r.loc_audio  || '',
-            status:         r.proxy_deleted ? 'synced' : 'pending',
-            camModel:       r.cam_model  || '',
-            origFile:       r.original_file || r.stem,
-            ext:            '.mp4',
-            tags:           [],
-            ts:             r.created_at || '',
-            _live:          true,  // flag: came from API
-          })));
+          setLiveResults((data.results || []).map(r => {
+            // Parse extension from original_file to avoid double-extension in FCP builder
+            const origWithExt = r.original_file || r.stem;
+            const extMatch    = origWithExt.match(/(\.[^.]+)$/);
+            const ext         = extMatch ? extMatch[1].toLowerCase() : '.mp4';
+            const origFile    = extMatch ? origWithExt.slice(0, -extMatch[1].length) : origWithExt;
+            return {
+              id:             r.stem,
+              name:           r.model   || r.stem,
+              sku:            r.sku     || '',
+              colorway:       r.colorway || '',
+              release:        r.release_date || r.shoot_date || r.analysed_at?.slice(0,10) || '',
+              retail:         r.price   || 0,
+              loc:            r.loc_code || '',
+              loc_source:     r.loc_source || 'unknown',
+              loc_confidence: r.loc_confidence || '',
+              loc_visual:     r.loc_visual || '',
+              loc_audio:      r.loc_audio  || '',
+              status:         r.proxy_deleted ? 'synced' : 'pending',
+              camModel:       r.cam_model  || '',
+              origFile,
+              ext,
+              fcpFilename:    r.fcp_filename || '',
+              folderPath:     r.folder_path || '',
+              tags:           [],
+              ts:             r.created_at || '',
+              _live:          true,
+            };
+          }));
           setLiveTotal(data.total || 0);
         }
       } catch (err) {
@@ -107,11 +117,14 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
 
   // ── FCP filename builder (mirrors fcp_namer.buildSACCFilename) ────────────────
   const getFCPFilename = (s) => {
-    const loc        = locations[s.loc];
-    const customName = (loc && s.loc_source !== 'unknown') ? `${s.loc}-${loc.type}` : 'UNKNOWN';
-    const date       = (s.release || '').replace(/-/g, '');
-    const cam        = (s.camModel || 'Cam').replace(/\s+/g, '');
-    return `${customName}_${date}_${cam}_${s.origFile}${s.ext}`;
+    // When no location is known, use the stored fcp_filename or just the original file
+    if (!s.loc || s.loc_source === 'unknown') {
+      return s.fcpFilename || `${s.origFile}${s.ext}`;
+    }
+    const loc  = locations[s.loc];
+    const date = (s.release || '').replace(/-/g, '');
+    const cam  = (s.camModel || 'Cam').replace(/\s+/g, '');
+    return `${s.loc}-${loc?.type || 'LOC'}_${date}_${cam}_${s.origFile}${s.ext}`;
   };
 
   // ── Metadata completeness ─────────────────────────────────────────────────────
@@ -121,7 +134,7 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
     if (!s.colorway)                    issues.push('Colorway');
     if (!s.release)                     issues.push('Date');
     if (!s.retail)                      issues.push('Price');
-    if (s.loc_source === 'unknown' || !s.loc) issues.push('Location');
+    if (!hideLocWarning && (s.loc_source === 'unknown' || !s.loc)) issues.push('Location');
     if (!issues.length) return { label: 'Complete', dot: P.success };
     if (issues.length <= 2) return { label: `Missing: ${issues.join(', ')}`, dot: P.warning };
     return { label: `Incomplete (${issues.length})`, dot: P.error };
@@ -319,10 +332,16 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
             </span>
           ))}
           <span style={{ marginLeft:'auto', fontSize:10, color:P.muted,
-            fontFamily:'Space Mono, monospace', display:'flex', gap:10 }}>
+            fontFamily:'Space Mono, monospace', display:'flex', gap:10, alignItems:'center' }}>
             <span style={{ color:'#34c759' }}>●{locStats.manual} manual</span>
             <span style={{ color:'#34c759' }}>◉{locStats.ai_confirmed} AI</span>
             <span style={{ color:'#8e8e93' }}>○{locStats.unknown} unknown</span>
+            <span onClick={() => setHideLocWarning(v => !v)}
+              style={{ ...chipStyle(hideLocWarning), fontSize:9, padding:'2px 7px',
+                opacity: hideLocWarning ? 1 : 0.6 }}
+              title="Toggle location warning in Metadata column">
+              {hideLocWarning ? '● hide loc warn' : '○ hide loc warn'}
+            </span>
           </span>
         </div>
 
@@ -481,6 +500,25 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
                                 borderBottom:`1px solid ${P.accent}44` }}>
 
                                 <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
+
+                                  {/* Video Preview */}
+                                  {s.folderPath && s.origFile && (
+                                    <div style={{ flex:'0 0 auto', width:224 }}>
+                                      <div style={{ fontSize:9, color:P.muted,
+                                        fontFamily:'Space Mono, monospace',
+                                        letterSpacing:'0.06em', marginBottom:4 }}>
+                                        PREVIEW
+                                      </div>
+                                      <video
+                                        src={`${API_BASE}/api/video?path=${encodeURIComponent(s.folderPath)}&file=${encodeURIComponent(s.origFile + s.ext)}`}
+                                        controls
+                                        preload="metadata"
+                                        style={{ width:224, borderRadius:6,
+                                          border:`1px solid ${P.border}`,
+                                          background:'#000', display:'block' }}
+                                      />
+                                    </div>
+                                  )}
 
                                   {/* FCP Filename */}
                                   <div style={{ flex:'2 1 260px' }}>

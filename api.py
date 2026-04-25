@@ -36,7 +36,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from collections import defaultdict
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file, abort
 from flask_cors import CORS
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -563,6 +563,23 @@ def db_validate():
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/video")
+def serve_video():
+    """Stream a video file from the NAS for in-browser preview.
+    Query params: path=<folder>  file=<filename>
+    """
+    folder   = request.args.get("path", "")
+    filename = request.args.get("file", "")
+    if not folder or not filename:
+        abort(400)
+    # Resolve and validate — prevent path traversal
+    safe_dir  = Path(folder).resolve()
+    safe_file = (safe_dir / Path(filename).name).resolve()
+    if safe_file.parent != safe_dir or not safe_file.is_file():
+        abort(404)
+    return send_file(str(safe_file), conditional=True)
 
 
 # ── Dev server ────────────────────────────────────────────────────────────────
