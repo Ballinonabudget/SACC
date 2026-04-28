@@ -304,3 +304,42 @@ standalone HTML tool — not part of the SCAA frontend. The project tracker is a
 
 Going forward: Claude Code handles all pipeline/Python/API/git work.
 Cowork handles reports, the project tracker, and GUI prototyping.
+
+---
+
+## Script Consolidation — April 2026
+
+SACC (`/Users/miniman/SACC/`) is now the **single central hub for all Python scripts**.
+The `Sneaker_Scripts` folder (`/Users/miniman/Documents/Sneaker_Scripts/`) is now legacy — do NOT look for scripts there.
+
+### Scripts added from Sneaker_Scripts
+
+| File | Description |
+|------|-------------|
+| `Beta Halloween Edition.py` | Apple Compressor batch script for Halloween b-roll footage |
+| `sneaker_pipeline.py` | Earlier standalone pipeline (kept for reference) |
+| `sneaker_schema.py` | Sneaker metadata schema definitions |
+| `API_Ready_HEVC.compressorsetting` | Apple Compressor HEVC preset — used by `compress_jordans.py` |
+
+### Duplicate resolved
+Both folders had `compress_jordans.py`. The SACC version (Apr 23, 2026) is newer and was kept.
+
+### Path fix applied
+`compress_jordans.py` previously referenced `SETTING_PATH` pointing to `Sneaker_Scripts/`.
+This has been updated to `/Users/miniman/SACC/API_Ready_HEVC.compressorsetting`.
+
+### Updated repo layout additions
+```
+/Users/miniman/SACC/
+├── API_Ready_HEVC.compressorsetting  ← Apple Compressor HEVC preset
+├── Beta Halloween Edition.py         ← Compressor batch for Halloween b-roll
+├── sneaker_pipeline.py               ← Standalone pipeline (legacy reference)
+└── sneaker_schema.py                 ← Metadata schema definitions
+```
+
+
+### Additional recovery — sneaker_schema.py (April 2026)
+`sneaker_schema.py` was found in `/Users/miniman/Downloads/` (not in Sneaker_Scripts as expected).
+It has been copied to `/Users/miniman/SACC/sneaker_schema.py`.
+The Downloads copies at `/Users/miniman/Downloads/sneaker_schema.py` and
+`/Users/miniman/Downloads/Claude Code/sneaker_schema.py` are now redundant.

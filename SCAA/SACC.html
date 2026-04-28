@@ -66,11 +66,11 @@
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 
 <script src="sacc/data.js?v=4"></script>
-<script type="text/babel" src="sacc/components.jsx?v=4"></script>
+<script type="text/babel" src="sacc/components.jsx?v=5"></script>
 <script type="text/babel" src="sacc/gallery-view.jsx?v=4"></script>
 <script type="text/babel" src="sacc/timeline-view.jsx?v=4"></script>
 <script type="text/babel" src="sacc/import-view.jsx?v=4"></script>
-<script type="text/babel" src="sacc/search-view.jsx?v=7"></script>
+<script type="text/babel" src="sacc/search-view.jsx?v=8"></script>
 <script type="text/babel" src="sacc/dashboard-view.jsx?v=4"></script>
 <script type="text/babel" src="sacc/renamer-view.jsx?v=4"></script>
 <script type="text/babel" src="sacc/verify-view.jsx?v=4"></script>
@@ -157,6 +157,40 @@ function App() {
   const [cmdQuery, setCmdQuery]   = useState('');
   const [cmdIdx, setCmdIdx]       = useState(0);
   const inputRef = useRef();
+
+  // Collections
+  const DEFAULT_COLLECTIONS = [
+    { id: 'jordan-retros',    name: 'Jordan Retros',    query: 'Jordan'  },
+    { id: 'adidas-originals', name: 'adidas Originals', query: 'adidas'  },
+    { id: 'nike-dunks',       name: 'Nike Dunks',       query: 'Dunk'    },
+    { id: 'collabs',          name: 'Collabs',          query: 'Collab'  },
+  ];
+  const [collections, setCollections] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('sacc_collections') || 'null') || DEFAULT_COLLECTIONS; }
+    catch { return DEFAULT_COLLECTIONS; }
+  });
+  const [activeCollection, setActiveCollection] = useState(null);
+  const [collectionQuery,  setCollectionQuery]  = useState('');
+
+  const handleCollectionSelect = useCallback((col) => {
+    if (activeCollection === col.id) {
+      setActiveCollection(null);
+      setCollectionQuery('');
+    } else {
+      setActiveCollection(col.id);
+      setCollectionQuery(col.query || '');
+      setView('search');
+    }
+  }, [activeCollection]);
+
+  const handleNewCollection = useCallback((name) => {
+    const newCol = { id: `col-${Date.now()}`, name, query: '' };
+    setCollections(prev => {
+      const next = [...prev, newCol];
+      localStorage.setItem('sacc_collections', JSON.stringify(next));
+      return next;
+    });
+  }, []);
 
   // Persist state
   useEffect(() => {
@@ -412,6 +446,10 @@ function App() {
           mode={mode} setMode={setMode}
           visibleViews={visibleViews}
           accent={accentColor}
+          collections={collections}
+          activeCollection={activeCollection}
+          onCollectionSelect={handleCollectionSelect}
+          onNewCollection={handleNewCollection}
         />
 
         {/* Center */}
@@ -448,6 +486,7 @@ function App() {
               accent={accentColor}
               activeFolder={activeFolder}
               onSelectSneaker={id => setSelectedId(id)}
+              externalQuery={collectionQuery}
             />
           )}
           {view === 'import' && mode === 'lite' && (

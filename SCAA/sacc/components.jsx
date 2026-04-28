@@ -126,13 +126,17 @@ function SmartFilter({ label, options, value, onChange }) {
 }
 
 // ── Sidebar Nav ──────────────────────────────────────────────────────────────
-function SidebarNav({ view, setView, mode, setMode, visibleViews, accent }) {
+function SidebarNav({ view, setView, mode, setMode, visibleViews, accent,
+                      collections, activeCollection, onCollectionSelect, onNewCollection }) {
+  const [newColOpen, setNewColOpen] = React.useState(false);
+  const [newColName, setNewColName] = React.useState('');
+
   const navItems = visibleViews || [
     { id: 'gallery',  icon: '⊞', label: 'Archive' },
     { id: 'timeline', icon: '☰', label: 'Timeline' },
     { id: 'import',   icon: '↓', label: 'Import' },
   ];
-  const collections = ['Jordan Retros', 'adidas Originals', 'Nike Dunks', 'Collabs'];
+  const collectionList = collections || [];
 
   return (
     <div style={{ width: 196, background: P.sidebar, display: 'flex',
@@ -181,18 +185,62 @@ function SidebarNav({ view, setView, mode, setMode, visibleViews, accent }) {
       <div style={{ padding: '8px 8px 0', marginTop: 8 }}>
         <div style={{ fontSize: 9, color: P.sidebarMuted, fontFamily: 'Space Mono, monospace',
           padding: '4px 8px 4px', letterSpacing: '0.08em' }}>COLLECTIONS</div>
-        {collections.map(c => (
-          <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
-            borderRadius: 6, cursor: 'pointer', color: P.sidebarText,
-            fontFamily: '-apple-system, sans-serif', fontSize: 12 }}>
-            <span style={{ fontSize: 11 }}>📁</span>{c}
+        {collectionList.map(c => {
+          const isActive = activeCollection === c.id;
+          return (
+            <div key={c.id} onClick={() => onCollectionSelect?.(c)}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
+                borderRadius: 6, cursor: 'pointer',
+                background: isActive ? 'rgba(255,255,255,0.12)' : 'transparent',
+                color: isActive ? '#fff' : P.sidebarText,
+                fontFamily: '-apple-system, sans-serif', fontSize: 12,
+                fontWeight: isActive ? 600 : 400,
+                transition: 'background 0.1s' }}>
+              <span style={{ fontSize: 11, opacity: 0.7 }}>▤</span>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {c.name}
+              </span>
+              {c.count != null && (
+                <span style={{ fontSize: 9, color: P.sidebarMuted, fontFamily: 'Space Mono, monospace' }}>
+                  {c.count}
+                </span>
+              )}
+            </div>
+          );
+        })}
+
+        {/* New Collection inline form */}
+        {newColOpen ? (
+          <div style={{ padding: '6px 10px' }}>
+            <input
+              autoFocus
+              value={newColName}
+              onChange={e => setNewColName(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && newColName.trim()) {
+                  onNewCollection?.(newColName.trim());
+                  setNewColName(''); setNewColOpen(false);
+                }
+                if (e.key === 'Escape') { setNewColName(''); setNewColOpen(false); }
+              }}
+              placeholder="Collection name…"
+              style={{ width: '100%', fontSize: 11, padding: '4px 7px', borderRadius: 4,
+                border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.08)',
+                color: '#fff', fontFamily: '-apple-system, sans-serif', outline: 'none',
+                boxSizing: 'border-box' }}
+            />
+            <div style={{ fontSize: 9, color: P.sidebarMuted, marginTop: 3,
+              fontFamily: 'Space Mono, monospace' }}>↵ save · Esc cancel</div>
           </div>
-        ))}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
-          borderRadius: 6, cursor: 'pointer', color: P.sidebarMuted,
-          fontFamily: '-apple-system, sans-serif', fontSize: 12 }}>
-          <span>+</span> New Collection
-        </div>
+        ) : (
+          <div onClick={() => setNewColOpen(true)}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
+              borderRadius: 6, cursor: 'pointer', color: P.sidebarMuted,
+              fontFamily: '-apple-system, sans-serif', fontSize: 12,
+              transition: 'color 0.1s' }}>
+            <span style={{ fontSize: 14, lineHeight: 1 }}>+</span> New Collection
+          </div>
+        )}
       </div>
 
       {/* Bottom */}

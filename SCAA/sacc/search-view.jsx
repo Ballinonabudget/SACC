@@ -6,7 +6,7 @@
 
 const API_BASE = 'http://localhost:5174';
 
-function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder, onSelectSneaker }) {
+function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder, onSelectSneaker, externalQuery }) {
   const P = SACC_PALETTE;
 
   const [query,       setQuery]       = React.useState('');
@@ -20,6 +20,26 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
   const [hideLocWarning, setHideLocWarning] = React.useState(false);
   const [colorFilter,    setColorFilter]    = React.useState('All');
 
+  // ── Pipeline filters (sneakers_broll) ────────────────────────────────────────
+  const [pipelineMode,  setPipelineMode]  = React.useState(false);
+  const [orientation,   setOrientation]   = React.useState('all');
+  const [shotType,      setShotType]      = React.useState('all');
+  const [yearFilter,    setYearFilter]    = React.useState('all');
+  const [sessionFilter, setSessionFilter] = React.useState('all');
+  const [availYears,    setAvailYears]    = React.useState([]);
+  const [availSessions, setAvailSessions] = React.useState([]);
+
+  const pipelineDb = activeFolder ? `${activeFolder}/sacc.db` : null;
+
+  // Load available years + sessions when pipeline mode activates
+  React.useEffect(() => {
+    if (!pipelineMode || !pipelineDb) return;
+    fetch(`${API_BASE}/api/pipeline/stats?db=${encodeURIComponent(pipelineDb)}`)
+      .then(r => r.json()).then(d => { if (d.years) setAvailYears(d.years); }).catch(() => {});
+    fetch(`${API_BASE}/api/pipeline/sessions?db=${encodeURIComponent(pipelineDb)}`)
+      .then(r => r.json()).then(d => { if (d.sessions) setAvailSessions(d.sessions); }).catch(() => {});
+  }, [pipelineMode, pipelineDb]);
+
   // ── Live API search state ─────────────────────────────────────────────────────
   const [liveResults,  setLiveResults]  = React.useState(null);  // null = not loaded yet
   const [liveLoading,  setLiveLoading]  = React.useState(false);
@@ -27,16 +47,64 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
   const [liveTotal,    setLiveTotal]    = React.useState(0);
   const debounceRef = React.useRef(null);
 
-  // Fire API search whenever query or activeFolder changes (debounced 300ms)
+  // Fire API search whenever query, filters, or activeFolder changes (debounced 300ms)
   React.useEffect(() => {
     if (!activeFolder) { setLiveResults(null); return; }
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
       setLiveLoading(true); setLiveError('');
       try {
+        let res, data;
+
+        if (pipelineMode && pipelineDb) {
+          // Pipeline search — sneakers_broll with compound filters
+          const params = new URLSearchParams({ db: pipelineDb, q: query, limit: 200 });
+          if (orientation !== 'all') params.set('orientation', orientation);
+          if (shotType    !== 'all') params.set('shot_type', shotType);
+          if (yearFilter  !== 'all') params.set('year', yearFilter);
+          if (sessionFilter !== 'all') params.set('session_id', sessionFilter);
+          res  = await fetch(`${API_BASE}/api/pipeline/search?${params}`);
+          data = await res.json();
+          if (!data.error) {
+            setLiveResults((data.results || []).map(r => ({
+              id:            r.original_file_id,
+              name:          `${r.brand || ''} ${r.silhouette || ''}`.trim() || r.original_file_id,
+              sku:           r.style_code  || '',
+              colorway:      r.colorway_name || '',
+              release:       r.release_date  || r.shoot_year || '',
+              retail:        r.retail_price  || 0,
+              loc:           r.loc_code || '',
+              loc_source:    r.loc_code ? 'manual' : 'unknown',
+              loc_confidence:'',
+              loc_visual:    '',
+              loc_audio:     '',
+              shot_context:  r.shot_type || 'unknown',
+              status:        r.verification_status === 'VERIFIED' ? 'synced' : 'pending',
+              camModel:      r.cam_model   || '',
+              origFile:      r.original_file_id,
+              ext:           '.mp4',
+              folderPath:    r.folder_path || '',
+              asset_url:     r.asset_url   || '',
+              aspect_ratio:  r.aspect_ratio || '',
+              shoot_year:    r.shoot_year   || '',
+              session_id:    r.session_id   || '',
+              shot_type:     r.shot_type    || '',
+              duration:      r.duration_seconds || null,
+              tags:          [],
+              ts:            r.creation_time || r.processing_timestamp || '',
+              _live: true, _pipeline: true,
+            })));
+            setLiveTotal(data.total || 0);
+          } else {
+            setLiveError(data.error); setLiveResults([]);
+          }
+          return;
+        }
+
+        // Legacy SACC DB search
         const params = new URLSearchParams({ path: activeFolder, q: query, limit: 200 });
-        const res  = await fetch(`${API_BASE}/api/db/search?${params}`);
-        const data = await res.json();
+        res  = await fetch(`${API_BASE}/api/db/search?${params}`);
+        data = await res.json();
         if (data.error) { setLiveError(data.error); setLiveResults([]); }
         else {
           // Normalize API record shape → same fields SearchView table expects
@@ -84,11 +152,16 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
       }
     }, 300);
     return () => clearTimeout(debounceRef.current);
-  }, [query, activeFolder]);
+  }, [query, activeFolder, pipelineMode, orientation, shotType, yearFilter, sessionFilter]);
 
   const inputRef = React.useRef(null);
 
   React.useEffect(() => { setTimeout(() => inputRef.current?.focus(), 80); }, []);
+
+  // Sync collection query when a collection is clicked from the sidebar
+  React.useEffect(() => {
+    if (externalQuery != null && externalQuery !== '') setQuery(externalQuery);
+  }, [externalQuery]);
 
   // ── Location confidence helpers ───────────────────────────────────────────────
   const LOC_CONF_COLOR = {
@@ -183,9 +256,18 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
     if (statusFilter !== 'All') rows = rows.filter(s => s.status === statusFilter);
     if (locFilter    !== 'All') rows = rows.filter(s => s.loc    === locFilter);
     if (locSrcFilter !== 'All') rows = rows.filter(s => s.loc_source === locSrcFilter);
-    if (colorFilter  !== 'All') rows = rows.filter(s =>
-      s.dominantColor === colorFilter || s.secondaryColor === colorFilter
-    );
+    if (colorFilter !== 'All') {
+      const cf = colorFilter.toLowerCase();
+      rows = rows.filter(s => {
+        // Exact match on structured color fields (static data)
+        if (s.dominantColor === colorFilter || s.secondaryColor === colorFilter) return true;
+        // Fallback: keyword match inside colorway string (live API data)
+        if ((s.colorway || '').toLowerCase().includes(cf)) return true;
+        // Fallback: keyword match inside shoe name
+        if ((s.name || '').toLowerCase().includes(cf)) return true;
+        return false;
+      });
+    }
 
     rows.sort((a, b) => {
       let av, bv;
@@ -198,7 +280,7 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
       return sortDir === 'desc' ? -cmp : cmp;
     });
     return rows;
-  }, [query, scope, statusFilter, locFilter, locSrcFilter, sortBy, sortDir, sourcePool, activeFolder, liveResults]);
+  }, [query, scope, statusFilter, locFilter, locSrcFilter, colorFilter, sortBy, sortDir, sourcePool, activeFolder, liveResults]);
 
   const whitelistResults = React.useMemo(() => {
     if (scope === 'archive') return [];
@@ -326,6 +408,57 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
           {[['release','Date'],['price','Price'],['name','Name'],['status','Status']].map(([k,l]) => sortBtn(k,l))}
         </div>
 
+        {/* Pipeline filter row */}
+        <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap', marginTop:6 }}>
+          <span onClick={() => { setPipelineMode(v => !v); }}
+            style={{ ...chipStyle(pipelineMode), fontSize:10, padding:'3px 9px',
+              background: pipelineMode ? '#007aff22' : 'transparent',
+              borderColor: pipelineMode ? '#007aff' : undefined,
+              color: pipelineMode ? '#007aff' : undefined }}>
+            ⌬ Pipeline
+          </span>
+          {pipelineMode && (<>
+            <span style={{ width:1, height:16, background:P.border, margin:'0 2px' }} />
+            <span style={{ fontSize:10, color:P.muted, fontFamily:'Space Mono, monospace', marginRight:2 }}>ORIENT</span>
+            {[['all','All'],['horizontal','↔ H'],['vertical','↕ V']].map(([v,l]) => (
+              <span key={v} onClick={() => setOrientation(v)} style={chipStyle(orientation === v)}>{l}</span>
+            ))}
+            <span style={{ width:1, height:16, background:P.border, margin:'0 2px' }} />
+            <span style={{ fontSize:10, color:P.muted, fontFamily:'Space Mono, monospace', marginRight:2 }}>SHOT</span>
+            {[['all','All'],['broll','B-roll'],['vlog','Vlog']].map(([v,l]) => (
+              <span key={v} onClick={() => setShotType(v)} style={chipStyle(shotType === v)}>{l}</span>
+            ))}
+            {availYears.length > 0 && (<>
+              <span style={{ width:1, height:16, background:P.border, margin:'0 2px' }} />
+              <span style={{ fontSize:10, color:P.muted, fontFamily:'Space Mono, monospace', marginRight:2 }}>YEAR</span>
+              {['all', ...availYears].map(y => (
+                <span key={y} onClick={() => setYearFilter(y)} style={chipStyle(yearFilter === y)}>
+                  {y === 'all' ? 'All' : y}
+                </span>
+              ))}
+            </>)}
+            {availSessions.length > 0 && (<>
+              <span style={{ width:1, height:16, background:P.border, margin:'0 2px' }} />
+              <span style={{ fontSize:10, color:P.muted, fontFamily:'Space Mono, monospace', marginRight:2 }}>SESSION</span>
+              <select value={sessionFilter} onChange={e => setSessionFilter(e.target.value)}
+                style={{ fontSize:10, padding:'2px 6px', borderRadius:4, border:`1px solid ${P.border}`,
+                  background:P.panel, color:P.text, fontFamily:'Space Mono, monospace' }}>
+                <option value="all">All sessions</option>
+                {availSessions.map(s => (
+                  <option key={s.session_id} value={s.session_id}>
+                    {s.session_id} ({s.clip_count} clips)
+                  </option>
+                ))}
+              </select>
+            </>)}
+            {(orientation !== 'all' || shotType !== 'all' || yearFilter !== 'all' || sessionFilter !== 'all') && (
+              <span onClick={() => { setOrientation('all'); setShotType('all'); setYearFilter('all'); setSessionFilter('all'); }}
+                style={{ fontSize:10, color:P.accent, cursor:'pointer',
+                  fontFamily:'-apple-system, sans-serif' }}>Clear ×</span>
+            )}
+          </>)}
+        </div>
+
         {/* Location source filter row */}
         <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap', marginTop:6 }}>
           <span style={{ fontSize:10, color:P.muted, fontFamily:'Space Mono, monospace', marginRight:2 }}>LOC SRC</span>
@@ -436,10 +569,13 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
             demo data — set folder in Dashboard to search live index
           </span>
         )}
-        {(statusFilter !== 'All' || locFilter !== 'All' || locSrcFilter !== 'All' || colorFilter !== 'All') && (
-          <span onClick={() => { setStatusFilter('All'); setLocFilter('All'); setLocSrcFilter('All'); setColorFilter('All'); }}
-            style={{ fontSize:10, color:P.accent, cursor:'pointer',
-              fontFamily:'-apple-system, sans-serif' }}>Clear filters ×</span>
+        {(statusFilter !== 'All' || locFilter !== 'All' || locSrcFilter !== 'All' || colorFilter !== 'All'
+          || orientation !== 'all' || shotType !== 'all' || yearFilter !== 'all' || sessionFilter !== 'all') && (
+          <span onClick={() => {
+            setStatusFilter('All'); setLocFilter('All'); setLocSrcFilter('All'); setColorFilter('All');
+            setOrientation('all'); setShotType('all'); setYearFilter('all'); setSessionFilter('all');
+          }} style={{ fontSize:10, color:P.accent, cursor:'pointer',
+            fontFamily:'-apple-system, sans-serif' }}>Clear filters ×</span>
         )}
         <span style={{ marginLeft:'auto', fontSize:10, color:P.muted,
           fontFamily:'Space Mono, monospace' }}>

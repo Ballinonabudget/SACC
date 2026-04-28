@@ -619,6 +619,224 @@ def serve_video():
     return send_file(str(safe_file), conditional=True)
 
 
+# ── Pipeline database endpoints (/api/pipeline/*) ────────────────────────────
+# These work directly against sneakers_broll / shoot_sessions in any sacc.db
+# pointed to by the `db` query param. Independent of the legacy SACCDB/clips layer.
+
+def _pipeline_db(db_param: str):
+    """Return (con, error_response) for a pipeline DB path param."""
+    if not db_param or not os.path.exists(db_param):
+        return None, (jsonify({"error": f"DB not found: {db_param}"}), 404)
+    try:
+        import sqlite3 as _sql
+        con = _sql.connect(db_param)
+        con.row_factory = _sql.Row
+        return con, None
+    except Exception as e:
+        return None, (jsonify({"error": str(e)}), 500)
+
+
+@app.route("/api/pipeline/search")
+def pipeline_search():
+    """
+    Compound search across sneakers_broll.
+
+    Query params (all optional):
+      db          — path to sacc.db
+      q           — full-text query (brand, silhouette, colorway, style_code)
+      orientation — vertical | horizontal | all (default all)
+      year        — 4-digit shoot year (e.g. 2025)
+      shot_type   — broll | vlog | all (default all)
+      session_id  — exact session ID
+      loc_code    — exact location code (e.g. FLM)
+      limit       — default 50
+      offset      — default 0
+    """
+    db_param = request.args.get("db", "")
+    con, err = _pipeline_db(db_param)
+    if err:
+        return err
+
+    q           = request.args.get("q", "").strip()
+    orientation = request.args.get("orientation", "all").lower()
+    year        = request.args.get("year", "").strip()
+    shot_type   = request.args.get("shot_type", "all").lower()
+    session_id  = request.args.get("session_id", "").strip()
+    loc_code    = request.args.get("loc_code", "").strip()
+    limit       = min(int(request.args.get("limit", 50)), 500)
+    offset      = int(request.args.get("offset", 0))
+
+    try:
+        conditions = []
+        params     = []
+
+        if q:
+            conditions.append(
+                "(brand LIKE ? OR silhouette LIKE ? OR colorway_name LIKE ? OR style_code LIKE ?)"
+            )
+            like = f"%{q}%"
+            params += [like, like, like, like]
+
+        if orientation == "vertical":
+            conditions.append("aspect_ratio = '9:16'")
+        elif orientation == "horizontal":
+            conditions.append("aspect_ratio = '16:9'")
+
+        if year:
+            conditions.append("shoot_year = ?")
+            params.append(year)
+
+        if shot_type in ("broll", "vlog"):
+            conditions.append("shot_type = ?")
+            params.append(shot_type)
+
+        if session_id:
+            conditions.append("session_id = ?")
+            params.append(session_id)
+
+        if loc_code:
+            conditions.append("loc_code = ?")
+            params.append(loc_code)
+
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        total_row = con.execute(
+            f"SELECT COUNT(*) FROM sneakers_broll {where}", params
+        ).fetchone()[0]
+
+        rows = con.execute(
+            f"SELECT * FROM sneakers_broll {where} ORDER BY creation_time DESC, original_file_id LIMIT ? OFFSET ?",
+            params + [limit, offset],
+        ).fetchall()
+
+        return jsonify({
+            "total":  total_row,
+            "count":  len(rows),
+            "offset": offset,
+            "results": [dict(r) for r in rows],
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        con.close()
+
+
+@app.route("/api/pipeline/sessions")
+def pipeline_sessions():
+    """List all shoot sessions. Query param: db=<path to sacc.db>"""
+    db_param = request.args.get("db", "")
+    con, err = _pipeline_db(db_param)
+    if err:
+        return err
+    try:
+        rows = con.execute(
+            "SELECT * FROM shoot_sessions ORDER BY shoot_date DESC, session_id"
+        ).fetchall()
+        return jsonify({"sessions": [dict(r) for r in rows]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        con.close()
+
+
+@app.route("/api/pipeline/stats")
+def pipeline_stats():
+    """Aggregate stats for the pipeline DB. Query param: db=<path to sacc.db>"""
+    db_param = request.args.get("db", "")
+    con, err = _pipeline_db(db_param)
+    if err:
+        return err
+    try:
+        total      = con.execute("SELECT COUNT(*) FROM sneakers_broll").fetchone()[0]
+        verified   = con.execute("SELECT COUNT(*) FROM sneakers_broll WHERE verification_status='VERIFIED'").fetchone()[0]
+        broll      = con.execute("SELECT COUNT(*) FROM sneakers_broll WHERE shot_type='broll'").fetchone()[0]
+        vlog       = con.execute("SELECT COUNT(*) FROM sneakers_broll WHERE shot_type='vlog'").fetchone()[0]
+        vertical   = con.execute("SELECT COUNT(*) FROM sneakers_broll WHERE aspect_ratio='9:16'").fetchone()[0]
+        horizontal = con.execute("SELECT COUNT(*) FROM sneakers_broll WHERE aspect_ratio='16:9'").fetchone()[0]
+        archived   = con.execute("SELECT COUNT(*) FROM proxy_manifest WHERE processing_status='ARCHIVED'").fetchone()[0]
+        sessions   = con.execute("SELECT COUNT(*) FROM shoot_sessions").fetchone()[0]
+
+        years = [r[0] for r in con.execute(
+            "SELECT DISTINCT shoot_year FROM sneakers_broll WHERE shoot_year IS NOT NULL ORDER BY shoot_year DESC"
+        ).fetchall()]
+
+        return jsonify({
+            "total": total, "verified": verified,
+            "shot_type": {"broll": broll, "vlog": vlog},
+            "orientation": {"vertical": vertical, "horizontal": horizontal},
+            "archived": archived, "sessions": sessions,
+            "years": years,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        con.close()
+
+
+@app.route("/api/pipeline/open", methods=["POST"])
+def pipeline_open():
+    """
+    Open a clip's asset in Finder (macOS).
+    Body: { "db": "<db_path>", "original_file_id": "<id>" }
+    """
+    body    = request.get_json(silent=True) or {}
+    db_path = body.get("db", "")
+    fid     = body.get("original_file_id", "")
+    if not db_path or not fid:
+        return jsonify({"error": "db and original_file_id required"}), 400
+
+    con, err = _pipeline_db(db_path)
+    if err:
+        return err
+    try:
+        row = con.execute(
+            "SELECT asset_url FROM sneakers_broll WHERE original_file_id=?", (fid,)
+        ).fetchone()
+        if not row or not row["asset_url"]:
+            return jsonify({"error": f"No asset_url for {fid}"}), 404
+        path = row["asset_url"]
+        if not os.path.exists(path):
+            return jsonify({"error": f"File not found at {path}"}), 404
+        subprocess.Popen(["open", "-R", path])
+        return jsonify({"ok": True, "revealed": path})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        con.close()
+
+
+@app.route("/api/pipeline/mark-fcp", methods=["POST"])
+def pipeline_mark_fcp():
+    """
+    Mark clip(s) as FCP-linked (frozen — phase7/phase8 will not touch them).
+    Body: { "db": "<db_path>", "ids": ["C0015", ...], "linked": true }
+    """
+    body    = request.get_json(silent=True) or {}
+    db_path = body.get("db", "")
+    ids     = body.get("ids", [])
+    linked  = 1 if body.get("linked", True) else 0
+    if not db_path or not ids:
+        return jsonify({"error": "db and ids required"}), 400
+
+    con, err = _pipeline_db(db_path)
+    if err:
+        return err
+    try:
+        import sqlite3 as _sql
+        con2 = _sql.connect(db_path)
+        con2.executemany(
+            "UPDATE sneakers_broll SET fcp_linked=? WHERE original_file_id=?",
+            [(linked, fid) for fid in ids],
+        )
+        con2.commit()
+        con2.close()
+        return jsonify({"ok": True, "updated": len(ids), "fcp_linked": bool(linked)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        con.close()
+
+
 # ── Dev server ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("\n  ┌─────────────────────────────────────────┐")
