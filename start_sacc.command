@@ -1,93 +1,72 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# SACC Launcher
-# Starts both the Flask API backend and the static SCAA frontend server,
-# then opens the browser automatically.
-# Double-click this file in Finder to launch everything.
+# SACC Launcher — v3.0 (The Native Bridge)
+# One server (FastAPI/uvicorn on 5174) serves both the API and the SCAA UI.
+# Double-click in Finder to launch.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Resolve absolute path to this script's directory regardless of how it's launched
-# (Finder double-click, bash /path/to/script, or bash ./script all work)
 SACC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCAA_DIR="$SACC_DIR/SCAA"
-API_PORT=5174
-UI_PORT=5173
-API_PID=""
-UI_PID=""
+PORT=5174
 
 # ── Cleanup on exit ──────────────────────────────────────────────────────────
 cleanup() {
   echo ""
-  echo "  Shutting down SACC servers…"
-  [ -n "$API_PID" ] && kill "$API_PID" 2>/dev/null
-  [ -n "$UI_PID"  ] && kill "$UI_PID"  2>/dev/null
-  # Kill anything still on those ports
-  lsof -ti tcp:$API_PORT | xargs kill -9 2>/dev/null
-  lsof -ti tcp:$UI_PORT  | xargs kill -9 2>/dev/null
+  echo "  Shutting down SACC…"
+  [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null
+  lsof -ti tcp:$PORT | xargs kill -9 2>/dev/null
   echo "  Done. Goodbye."
   exit 0
 }
 trap cleanup INT TERM EXIT
 
-# ── Kill stale processes on the ports ────────────────────────────────────────
-for PORT in $API_PORT $UI_PORT; do
-  if lsof -ti tcp:$PORT > /dev/null 2>&1; then
-    echo "→ Clearing port $PORT…"
-    lsof -ti tcp:$PORT | xargs kill -9 2>/dev/null
-    sleep 0.5
-  fi
-done
+# ── Clear stale process on port ──────────────────────────────────────────────
+if lsof -ti tcp:$PORT > /dev/null 2>&1; then
+  echo "→ Clearing port $PORT…"
+  lsof -ti tcp:$PORT | xargs kill -9 2>/dev/null
+  sleep 0.5
+fi
 
-# ── Install flask-cors if missing ────────────────────────────────────────────
-python3 -c "import flask_cors" 2>/dev/null || {
-  echo "→ Installing flask-cors…"
-  python3 -m pip install flask flask-cors --quiet
+# ── Ensure FastAPI / uvicorn are installed ───────────────────────────────────
+python3 -c "import fastapi, uvicorn" 2>/dev/null || {
+  echo "→ Installing fastapi and uvicorn…"
+  python3 -m pip install fastapi "uvicorn[standard]" --quiet
 }
 
 echo ""
 echo "  ┌──────────────────────────────────────────────────┐"
-echo "  │         SACC — Sneaker Archive Command Center    │"
+echo "  │         SACC v3.0 — Sneaker Archive              │"
 echo "  │                                                  │"
-echo "  │   UI  →  http://localhost:$UI_PORT/SACC.html       │"
-echo "  │   API →  http://localhost:$API_PORT/api/health     │"
+echo "  │   UI  →  http://localhost:$PORT/SACC.html        │"
+echo "  │   API →  http://localhost:$PORT/api/health       │"
 echo "  │                                                  │"
-echo "  │   Press Control+C to stop both servers          │"
+echo "  │   Press Control+C to stop                       │"
 echo "  └──────────────────────────────────────────────────┘"
 echo ""
 echo "  SACC root : $SACC_DIR"
-echo "  SCAA root : $SCAA_DIR"
 echo ""
 
-# ── Start Flask API backend ──────────────────────────────────────────────────
+# ── Start FastAPI server (serves both API and SCAA static frontend) ──────────
 cd "$SACC_DIR"
-python3 api.py > /tmp/sacc_api.log 2>&1 &
-API_PID=$!
-echo "  ✓ API server started (PID $API_PID)"
+python3 -m uvicorn main:app --host 127.0.0.1 --port $PORT > /tmp/sacc_api.log 2>&1 &
+SERVER_PID=$!
+echo "  ✓ Server started (PID $SERVER_PID)"
 
-# ── Wait for API to be ready (up to 5s) ─────────────────────────────────────
-for i in 1 2 3 4 5; do
+# ── Wait for server to be ready (up to 8s) ───────────────────────────────────
+for i in 1 2 3 4 5 6 7 8; do
   sleep 1
-  if curl -s "http://localhost:$API_PORT/api/health" > /dev/null 2>&1; then
-    echo "  ✓ API online at http://localhost:$API_PORT"
+  if curl -s "http://localhost:$PORT/api/health" > /dev/null 2>&1; then
+    echo "  ✓ Server online at http://localhost:$PORT"
     break
   fi
-  echo "  ⟳ Waiting for API… ($i/5)"
+  echo "  ⟳ Waiting for server… ($i/8)"
 done
 
-# ── Start static file server for SCAA frontend ───────────────────────────────
-cd "$SCAA_DIR"
-python3 -m http.server $UI_PORT > /tmp/sacc_ui.log 2>&1 &
-UI_PID=$!
-echo "  ✓ UI server started (PID $UI_PID)"
-
 # ── Open browser ─────────────────────────────────────────────────────────────
-sleep 0.5
-open "http://localhost:$UI_PORT/SACC.html"
-echo "  ✓ Browser opened → http://localhost:$UI_PORT/SACC.html"
+open "http://localhost:$PORT/SACC.html"
+echo "  ✓ Browser opened → http://localhost:$PORT/SACC.html"
 echo ""
-echo "  API log: /tmp/sacc_api.log"
-echo "  UI log:  /tmp/sacc_ui.log"
+echo "  Log: /tmp/sacc_api.log"
 echo ""
 
 # ── Keep alive ───────────────────────────────────────────────────────────────
-wait $API_PID $UI_PID
+wait $SERVER_PID

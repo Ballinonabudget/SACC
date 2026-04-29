@@ -158,19 +158,19 @@ function App() {
   const [cmdIdx, setCmdIdx]       = useState(0);
   const inputRef = useRef();
 
-  // Collections
-  const DEFAULT_COLLECTIONS = [
-    { id: 'jordan-retros',    name: 'Jordan Retros',    query: 'Jordan'  },
-    { id: 'adidas-originals', name: 'adidas Originals', query: 'adidas'  },
-    { id: 'nike-dunks',       name: 'Nike Dunks',       query: 'Dunk'    },
-    { id: 'collabs',          name: 'Collabs',          query: 'Collab'  },
-  ];
-  const [collections, setCollections] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('sacc_collections') || 'null') || DEFAULT_COLLECTIONS; }
-    catch { return DEFAULT_COLLECTIONS; }
-  });
+  // Collections — backed by SQLite via /api/collections (V3.0)
+  const _COLL_API = '/api/collections';
+  const [collections, setCollections] = useState([]);
   const [activeCollection, setActiveCollection] = useState(null);
   const [collectionQuery,  setCollectionQuery]  = useState('');
+
+  // Load collections from SQLite on mount
+  useEffect(() => {
+    fetch(_COLL_API)
+      .then(r => r.json())
+      .then(d => { if (d.collections?.length) setCollections(d.collections); })
+      .catch(() => {});
+  }, []);
 
   const handleCollectionSelect = useCallback((col) => {
     if (activeCollection === col.id) {
@@ -184,12 +184,20 @@ function App() {
   }, [activeCollection]);
 
   const handleNewCollection = useCallback((name) => {
-    const newCol = { id: `col-${Date.now()}`, name, query: '' };
-    setCollections(prev => {
-      const next = [...prev, newCol];
-      localStorage.setItem('sacc_collections', JSON.stringify(next));
-      return next;
-    });
+    fetch(_COLL_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, query: '' }),
+    })
+      .then(r => r.json())
+      .then(newCol => setCollections(prev => [...prev, newCol]))
+      .catch(() => {});
+  }, []);
+
+  const handleDeleteCollection = useCallback((colId) => {
+    fetch(`${_COLL_API}/${colId}`, { method: 'DELETE' })
+      .then(() => setCollections(prev => prev.filter(c => c.id !== colId)))
+      .catch(() => {});
   }, []);
 
   // Persist state
@@ -450,6 +458,7 @@ function App() {
           activeCollection={activeCollection}
           onCollectionSelect={handleCollectionSelect}
           onNewCollection={handleNewCollection}
+          onDeleteCollection={handleDeleteCollection}
         />
 
         {/* Center */}

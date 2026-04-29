@@ -47,6 +47,13 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
   const [liveTotal,    setLiveTotal]    = React.useState(0);
   const debounceRef = React.useRef(null);
 
+  // ── Pagination (V3.1) ─────────────────────────────────────────────────────────
+  const PAGE_SIZE = 50;
+  const [page, setPage] = React.useState(0);
+  // Reset to first page whenever the query or any filter changes
+  React.useEffect(() => { setPage(0); },
+    [query, activeFolder, pipelineMode, orientation, shotType, yearFilter, sessionFilter]);
+
   // Fire API search whenever query, filters, or activeFolder changes (debounced 300ms)
   React.useEffect(() => {
     if (!activeFolder) { setLiveResults(null); return; }
@@ -58,7 +65,7 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
 
         if (pipelineMode && pipelineDb) {
           // Pipeline search — sneakers_broll with compound filters
-          const params = new URLSearchParams({ db: pipelineDb, q: query, limit: 200 });
+          const params = new URLSearchParams({ db: pipelineDb, q: query, limit: PAGE_SIZE, offset: page * PAGE_SIZE });
           if (orientation !== 'all') params.set('orientation', orientation);
           if (shotType    !== 'all') params.set('shot_type', shotType);
           if (yearFilter  !== 'all') params.set('year', yearFilter);
@@ -102,7 +109,7 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
         }
 
         // Legacy SACC DB search
-        const params = new URLSearchParams({ path: activeFolder, q: query, limit: 200 });
+        const params = new URLSearchParams({ path: activeFolder, q: query, limit: PAGE_SIZE, offset: page * PAGE_SIZE });
         res  = await fetch(`${API_BASE}/api/db/search?${params}`);
         data = await res.json();
         if (data.error) { setLiveError(data.error); setLiveResults([]); }
@@ -152,7 +159,7 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
       }
     }, 300);
     return () => clearTimeout(debounceRef.current);
-  }, [query, activeFolder, pipelineMode, orientation, shotType, yearFilter, sessionFilter]);
+  }, [query, activeFolder, pipelineMode, orientation, shotType, yearFilter, sessionFilter, page]);
 
   const inputRef = React.useRef(null);
 
@@ -577,10 +584,41 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
           }} style={{ fontSize:10, color:P.accent, cursor:'pointer',
             fontFamily:'-apple-system, sans-serif' }}>Clear filters ×</span>
         )}
-        <span style={{ marginLeft:'auto', fontSize:10, color:P.muted,
-          fontFamily:'Space Mono, monospace' }}>
-          {archiveResults.length} archive · {whitelistResults.length} whitelist
-        </span>
+
+        {/* Pagination controls — only shown when live API is active */}
+        {activeFolder && liveResults !== null && liveTotal > PAGE_SIZE && (
+          <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:8 }}>
+            <button
+              onClick={() => setPage(p => Math.max(0, p - 1))}
+              disabled={page === 0}
+              style={{ padding:'2px 10px', fontSize:11, borderRadius:4, border:`1px solid ${P.border}`,
+                background: page === 0 ? 'transparent' : P.panel,
+                color: page === 0 ? P.muted : P.text,
+                cursor: page === 0 ? 'default' : 'pointer',
+                fontFamily:'-apple-system, sans-serif' }}>
+              ←
+            </button>
+            <span style={{ fontSize:10, color:P.muted, fontFamily:'Space Mono, monospace', minWidth:70, textAlign:'center' }}>
+              {page + 1} / {Math.ceil(liveTotal / PAGE_SIZE)}
+            </span>
+            <button
+              onClick={() => setPage(p => p + 1)}
+              disabled={(page + 1) * PAGE_SIZE >= liveTotal}
+              style={{ padding:'2px 10px', fontSize:11, borderRadius:4, border:`1px solid ${P.border}`,
+                background: (page + 1) * PAGE_SIZE >= liveTotal ? 'transparent' : P.panel,
+                color: (page + 1) * PAGE_SIZE >= liveTotal ? P.muted : P.text,
+                cursor: (page + 1) * PAGE_SIZE >= liveTotal ? 'default' : 'pointer',
+                fontFamily:'-apple-system, sans-serif' }}>
+              →
+            </button>
+          </div>
+        )}
+        {!(activeFolder && liveResults !== null && liveTotal > PAGE_SIZE) && (
+          <span style={{ marginLeft:'auto', fontSize:10, color:P.muted,
+            fontFamily:'Space Mono, monospace' }}>
+            {archiveResults.length} archive · {whitelistResults.length} whitelist
+          </span>
+        )}
       </div>
 
       {/* ── Results ── */}

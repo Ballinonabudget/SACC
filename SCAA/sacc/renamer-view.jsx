@@ -20,7 +20,68 @@ function RenamerView({ mode, accent, folder }) {
   const [locations, setLocations]     = React.useState([]);
   const [applyingLoc, setApplyingLoc] = React.useState(false);
   const [applyRes, setApplyRes]       = React.useState(null);
-  const [activeTab, setActiveTab]     = React.useState('rename'); // 'rename' | 'database'
+  const [activeTab, setActiveTab]     = React.useState('rename'); // 'rename' | 'database' | 'pipeline'
+
+  // Phase 7 / Phase 8 SSE state
+  const [p7Loc,     setP7Loc]     = React.useState('');
+  const [p7Apply,   setP7Apply]   = React.useState(false);
+  const [p7All,     setP7All]     = React.useState(false);
+  const [p7Running, setP7Running] = React.useState(false);
+  const [p7Log,     setP7Log]     = React.useState([]);
+  const [p8DryRun,  setP8DryRun]  = React.useState(true);
+  const [p8Running, setP8Running] = React.useState(false);
+  const [p8Log,     setP8Log]     = React.useState([]);
+  const p7LogRef = React.useRef(null);
+  const p8LogRef = React.useRef(null);
+  const p7ES = React.useRef(null);
+  const p8ES = React.useRef(null);
+
+  // Auto-scroll log panels
+  React.useEffect(() => { p7LogRef.current?.scrollTo(0, p7LogRef.current.scrollHeight); }, [p7Log]);
+  React.useEffect(() => { p8LogRef.current?.scrollTo(0, p8LogRef.current.scrollHeight); }, [p8Log]);
+
+  const runPhase7 = React.useCallback(() => {
+    const loc = p7Loc.trim().toUpperCase();
+    if (!loc) return;
+    if (p7ES.current) p7ES.current.close();
+    setP7Running(true);
+    setP7Log(['▶ Phase 7 starting…']);
+    const params = new URLSearchParams({ loc, apply: p7Apply, all: p7All });
+    const es = new EventSource(`${_API}/api/pipeline/run-phase7?${params}`);
+    p7ES.current = es;
+    es.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      if (data.done) {
+        es.close();
+        setP7Running(false);
+        setP7Log(prev => [...prev, data.exit_code === 0 ? '✓ Phase 7 complete' : `✗ Exit code ${data.exit_code}`]);
+        return;
+      }
+      setP7Log(prev => [...prev, data.line]);
+    };
+    es.onerror = () => { es.close(); setP7Running(false); setP7Log(prev => [...prev, '✗ Connection lost']); };
+  }, [p7Loc, p7Apply, p7All]);
+
+  const runPhase8 = React.useCallback(() => {
+    if (p8ES.current) p8ES.current.close();
+    setP8Running(true);
+    setP8Log(['▶ Phase 8 starting…']);
+    const params = new URLSearchParams({ dry_run: p8DryRun });
+    const es = new EventSource(`${_API}/api/pipeline/run-phase8?${params}`);
+    p8ES.current = es;
+    es.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      if (data.done) {
+        es.close();
+        setP8Running(false);
+        setP8Log(prev => [...prev, data.exit_code === 0 ? '✓ Phase 8 complete' : `✗ Exit code ${data.exit_code}`]);
+        return;
+      }
+      setP8Log(prev => [...prev, data.line]);
+    };
+    es.onerror = () => { es.close(); setP8Running(false); setP8Log(prev => [...prev, '✗ Connection lost']); };
+  }, [p8DryRun]);
+
   const nlpTimer = React.useRef(null);
 
   // Load locations list once
@@ -138,7 +199,7 @@ function RenamerView({ mode, accent, folder }) {
         </div>
         {/* Tab switcher */}
         <div style={{ display: 'flex', background: P.border, borderRadius: 8, padding: 2, gap: 2 }}>
-          {[['rename','Renamer'],['database','Database']].map(([id, label]) => (
+          {[['rename','Renamer'],['database','Database'],['pipeline','Pipeline']].map(([id, label]) => (
             <div key={id} onClick={() => setActiveTab(id)}
               style={{ padding: '5px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 11,
                 fontWeight: 600, fontFamily: '-apple-system, sans-serif',
@@ -327,6 +388,135 @@ function RenamerView({ mode, accent, folder }) {
             </div>
           )}
         </>
+      )}
+
+      {/* ── PIPELINE TAB — Phase 7 + Phase 8 SSE ──────────────────────────── */}
+      {activeTab === 'pipeline' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+          {/* ── Phase 7 ─────────────────────────────────────────────────── */}
+          <div style={{ background: P.panel, border: `1px solid ${P.border}`, borderRadius: 10, padding: '14px 16px' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: P.text, fontFamily: '-apple-system, sans-serif', marginBottom: 12 }}>
+              Phase 7 — Rename
+              <span style={{ marginLeft: 8, fontSize: 10, color: P.muted, fontFamily: 'Space Mono, monospace', fontWeight: 400 }}>
+                phase7_renamer.py
+              </span>
+            </div>
+
+            {/* Controls row */}
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', marginBottom: 10, flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 120 }}>
+                <div style={{ fontSize: 9, color: P.muted, fontFamily: 'Space Mono, monospace', marginBottom: 4, letterSpacing: '0.06em' }}>
+                  LOC CODE
+                </div>
+                <input
+                  value={p7Loc}
+                  onChange={e => setP7Loc(e.target.value.toUpperCase())}
+                  placeholder="e.g. FLM"
+                  style={{ width: '100%', border: `1px solid ${P.border}`, borderRadius: 6, padding: '6px 10px',
+                    fontSize: 12, fontFamily: 'Space Mono, monospace', color: P.text,
+                    background: P.bg, outline: 'none', boxSizing: 'border-box', textTransform: 'uppercase' }}
+                />
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer',
+                fontSize: 11, color: P.text, fontFamily: '-apple-system, sans-serif', paddingBottom: 2 }}>
+                <input type="checkbox" checked={p7Apply} onChange={e => setP7Apply(e.target.checked)}
+                  style={{ accentColor: P.accent }} />
+                Apply
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer',
+                fontSize: 11, color: P.text, fontFamily: '-apple-system, sans-serif', paddingBottom: 2 }}>
+                <input type="checkbox" checked={p7All} onChange={e => setP7All(e.target.checked)}
+                  style={{ accentColor: P.accent }} />
+                Include unverified
+              </label>
+              <button onClick={runPhase7} disabled={p7Running || !p7Loc.trim()}
+                style={{ padding: '7px 18px', borderRadius: 7, border: 'none',
+                  cursor: (p7Running || !p7Loc.trim()) ? 'not-allowed' : 'pointer',
+                  fontSize: 12, fontWeight: 700, fontFamily: '-apple-system, sans-serif', color: '#fff',
+                  background: p7Running ? '#666' : (p7Apply ? '#ff6b35' : '#34c759'),
+                  transition: 'background 0.2s' }}>
+                {p7Running ? '⟳ Running…' : p7Apply ? '▶ Rename Files' : '▶ Dry Run'}
+              </button>
+            </div>
+
+            {/* Live log */}
+            {p7Log.length > 0 && (
+              <div ref={p7LogRef}
+                style={{ background: '#0d0d0f', borderRadius: 6, padding: '10px 12px', maxHeight: 200,
+                  overflowY: 'auto', fontFamily: 'Space Mono, monospace', fontSize: 10,
+                  lineHeight: 1.7, color: '#ccc', display: 'flex', flexDirection: 'column', gap: 1 }}>
+                {p7Log.map((line, i) => (
+                  <div key={i} style={{
+                    color: line.startsWith('✓') ? '#34c759'
+                         : line.startsWith('✗') ? '#ff453a'
+                         : line.includes('[RENAMED]') ? '#30d158'
+                         : line.includes('[ERROR]') ? '#ff453a'
+                         : line.includes('[DRY-RUN]') ? '#ffd60a'
+                         : '#ccc'
+                  }}>
+                    {line}
+                  </div>
+                ))}
+                {p7Running && (
+                  <div style={{ color: P.accent, animation: 'pulse 1s infinite' }}>▌</div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* ── Phase 8 ─────────────────────────────────────────────────── */}
+          <div style={{ background: P.panel, border: `1px solid ${P.border}`, borderRadius: 10, padding: '14px 16px' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: P.text, fontFamily: '-apple-system, sans-serif', marginBottom: 12 }}>
+              Phase 8 — Archive to Synology
+              <span style={{ marginLeft: 8, fontSize: 10, color: P.muted, fontFamily: 'Space Mono, monospace', fontWeight: 400 }}>
+                phase8_archival.py
+              </span>
+            </div>
+
+            {/* Controls row */}
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer',
+                fontSize: 11, color: P.text, fontFamily: '-apple-system, sans-serif' }}>
+                <input type="checkbox" checked={p8DryRun} onChange={e => setP8DryRun(e.target.checked)}
+                  style={{ accentColor: P.accent }} />
+                Dry run (preview moves, no changes)
+              </label>
+              <button onClick={runPhase8} disabled={p8Running}
+                style={{ padding: '7px 18px', borderRadius: 7, border: 'none',
+                  cursor: p8Running ? 'not-allowed' : 'pointer',
+                  fontSize: 12, fontWeight: 700, fontFamily: '-apple-system, sans-serif', color: '#fff',
+                  background: p8Running ? '#666' : (p8DryRun ? '#34c759' : '#007aff'),
+                  transition: 'background 0.2s' }}>
+                {p8Running ? '⟳ Running…' : p8DryRun ? '▶ Preview Archive' : '▶ Archive Files'}
+              </button>
+            </div>
+
+            {/* Live log */}
+            {p8Log.length > 0 && (
+              <div ref={p8LogRef}
+                style={{ background: '#0d0d0f', borderRadius: 6, padding: '10px 12px', maxHeight: 200,
+                  overflowY: 'auto', fontFamily: 'Space Mono, monospace', fontSize: 10,
+                  lineHeight: 1.7, color: '#ccc', display: 'flex', flexDirection: 'column', gap: 1 }}>
+                {p8Log.map((line, i) => (
+                  <div key={i} style={{
+                    color: line.startsWith('✓') ? '#34c759'
+                         : line.startsWith('✗') ? '#ff453a'
+                         : line.includes('[ARCHIVED]') ? '#30d158'
+                         : line.includes('[ERROR]') ? '#ff453a'
+                         : line.includes('[DRY-RUN]') ? '#ffd60a'
+                         : '#ccc'
+                  }}>
+                    {line}
+                  </div>
+                ))}
+                {p8Running && (
+                  <div style={{ color: P.accent }}>▌</div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {/* ── DATABASE TAB ──────────────────────────────────────────────────── */}

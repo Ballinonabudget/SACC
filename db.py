@@ -154,7 +154,7 @@ class SACCDB:
 
     @contextmanager
     def _conn(self):
-        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn = sqlite3.connect(self.db_path, timeout=10, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         try:
@@ -206,16 +206,21 @@ class SACCDB:
 
     # ── Sync from folder ────────────────────────────────────────────────────
 
+    _BATCH_SIZE = 500  # rows per executemany call — safe under SQLite variable limit
+
     def sync_from_folder(self, folder: str) -> dict:
         """
         Walk <folder>/json/ and upsert every SACC JSON into the database.
-        Returns a summary dict: {inserted, updated, skipped, errors}.
+        Uses batch executemany with ON CONFLICT UPSERT for high-speed ingestion
+        (handles 100k+ records without hitting SQLite's variable limit).
+        Returns a summary dict: {upserted, errors}.
         """
         json_dir = os.path.join(folder, "json")
         if not os.path.isdir(json_dir):
             return {"error": f"json/ directory not found in {folder}"}
 
-        results = {"inserted": 0, "updated": 0, "skipped": 0, "errors": []}
+        results: dict = {"upserted": 0, "errors": []}
+        rows: list = []
 
         for fname in sorted(os.listdir(json_dir)):
             if not fname.endswith(".json"):
@@ -224,43 +229,31 @@ class SACCDB:
             try:
                 with open(jpath) as fh:
                     data = json.load(fh)
-
                 stem = os.path.splitext(fname)[0]
-                row  = _json_to_row(data, stem, jpath, folder)
-                action = self._upsert(row)
-                results[action] += 1
-
+                rows.append(_json_to_row(data, stem, jpath, folder))
             except Exception as e:
                 results["errors"].append(f"{fname}: {e}")
 
-        return results
+        if not rows:
+            return results
 
-    def _upsert(self, row: dict) -> str:
-        """Insert or update a clips row. Returns 'inserted' | 'updated' | 'skipped'."""
+        cols = list(rows[0].keys())
+        placeholders = ", ".join("?" * len(cols))
+        update_sets = ", ".join(
+            f"{c}=excluded.{c}" for c in cols if c != "stem"
+        )
+        sql = (
+            f"INSERT INTO clips ({', '.join(cols)}) VALUES ({placeholders}) "
+            f"ON CONFLICT(stem) DO UPDATE SET {update_sets}"
+        )
+
         with self._conn() as conn:
-            existing = conn.execute(
-                "SELECT id, updated_at FROM clips WHERE stem = ?", (row["stem"],)
-            ).fetchone()
+            for i in range(0, len(rows), self._BATCH_SIZE):
+                batch = rows[i : i + self._BATCH_SIZE]
+                conn.executemany(sql, [list(r.values()) for r in batch])
 
-            now = _utcnow()
-            if existing is None:
-                cols   = ", ".join(row.keys())
-                places = ", ".join("?" for _ in row)
-                conn.execute(
-                    f"INSERT INTO clips ({cols}) VALUES ({places})",
-                    list(row.values())
-                )
-                return "inserted"
-            else:
-                # Update all fields
-                sets = ", ".join(f"{k} = ?" for k in row if k != "stem")
-                vals = [v for k, v in row.items() if k != "stem"]
-                vals.append(now)
-                vals.append(row["stem"])
-                conn.execute(
-                    f"UPDATE clips SET {sets}, updated_at = ? WHERE stem = ?", vals
-                )
-                return "updated"
+        results["upserted"] = len(rows)
+        return results
 
     # ── Search ──────────────────────────────────────────────────────────────
 

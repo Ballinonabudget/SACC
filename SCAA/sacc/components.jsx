@@ -127,9 +127,10 @@ function SmartFilter({ label, options, value, onChange }) {
 
 // ── Sidebar Nav ──────────────────────────────────────────────────────────────
 function SidebarNav({ view, setView, mode, setMode, visibleViews, accent,
-                      collections, activeCollection, onCollectionSelect, onNewCollection }) {
-  const [newColOpen, setNewColOpen] = React.useState(false);
-  const [newColName, setNewColName] = React.useState('');
+                      collections, activeCollection, onCollectionSelect, onNewCollection, onDeleteCollection }) {
+  const [newColOpen,  setNewColOpen]  = React.useState(false);
+  const [newColName,  setNewColName]  = React.useState('');
+  const [hoveredCol,  setHoveredCol]  = React.useState(null);
 
   const navItems = visibleViews || [
     { id: 'gallery',  icon: '⊞', label: 'Archive' },
@@ -187,11 +188,15 @@ function SidebarNav({ view, setView, mode, setMode, visibleViews, accent,
           padding: '4px 8px 4px', letterSpacing: '0.08em' }}>COLLECTIONS</div>
         {collectionList.map(c => {
           const isActive = activeCollection === c.id;
+          const isHover  = hoveredCol === c.id;
           return (
-            <div key={c.id} onClick={() => onCollectionSelect?.(c)}
+            <div key={c.id}
+              onMouseEnter={() => setHoveredCol(c.id)}
+              onMouseLeave={() => setHoveredCol(null)}
+              onClick={() => onCollectionSelect?.(c)}
               style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
                 borderRadius: 6, cursor: 'pointer',
-                background: isActive ? 'rgba(255,255,255,0.12)' : 'transparent',
+                background: isActive ? 'rgba(255,255,255,0.12)' : isHover ? 'rgba(255,255,255,0.05)' : 'transparent',
                 color: isActive ? '#fff' : P.sidebarText,
                 fontFamily: '-apple-system, sans-serif', fontSize: 12,
                 fontWeight: isActive ? 600 : 400,
@@ -200,11 +205,20 @@ function SidebarNav({ view, setView, mode, setMode, visibleViews, accent,
               <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {c.name}
               </span>
-              {c.count != null && (
+              {isHover && onDeleteCollection ? (
+                <span
+                  onClick={e => { e.stopPropagation(); onDeleteCollection(c.id); }}
+                  title="Delete collection"
+                  style={{ fontSize: 10, color: P.sidebarMuted, cursor: 'pointer',
+                    padding: '0 2px', lineHeight: 1, opacity: 0.6,
+                    fontFamily: 'Space Mono, monospace' }}>
+                  ✕
+                </span>
+              ) : c.count != null ? (
                 <span style={{ fontSize: 9, color: P.sidebarMuted, fontFamily: 'Space Mono, monospace' }}>
                   {c.count}
                 </span>
-              )}
+              ) : null}
             </div>
           );
         })}
