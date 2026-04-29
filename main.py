@@ -225,6 +225,8 @@ class PipelineRunBody(BaseModel):
     path: str
     loc: str = ""
     fcp_mode: bool = True
+    no_move: bool = True
+    root: str = "/Volumes/Team Bank 12/SACC"
 
 class DbSyncBody(BaseModel):
     path: str
@@ -451,11 +453,15 @@ def pipeline_run(body: PipelineRunBody):
     script = os.path.join(os.path.dirname(__file__), "sacc_pipeline.py")
     if not os.path.exists(script):
         raise HTTPException(500, "sacc_pipeline.py not found")
-    cmd = [sys.executable, script, "--src", body.path]
+    if not os.path.isdir(body.path):
+        raise HTTPException(404, f"Folder not found: {body.path}")
+    cmd = [sys.executable, script, "--inbox", body.path, "--root", body.root]
     if body.fcp_mode:
         cmd.append("--fcp")
+    if body.no_move:
+        cmd.append("--no-move")
     if body.loc:
-        cmd += ["--loc", body.loc]
+        cmd += ["--loc", body.loc.strip().upper()]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         return {

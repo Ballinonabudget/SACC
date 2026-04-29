@@ -44,6 +44,54 @@ sys.path.insert(0, os.path.dirname(__file__))
 app = Flask(__name__)
 CORS(app)  # allow SCAA frontend on :5173 to call this API on :5174
 
+# ── SACC Error Code Ledger ────────────────────────────────────────────────────
+#
+# Codes
+#   E001–E009  Configuration errors  (user must fix a setting or path)
+#   E010–E019  Pipeline errors       (failure inside the pipeline stages)
+#   E020–E029  Validation warnings   (data-integrity issues, not blockers)
+#   E030–E039  Validation errors     (blocking integrity failures)
+#
+# Each error response carries: code, category, message, hint
+#
+_ERROR_REGISTRY = {
+    "E001": ("config",     "Path argument missing",
+             "Provide a 'path' field in the request body."),
+    "E002": ("system",     "sacc_pipeline.py not found",
+             "Reinstall SACC or check that /Users/miniman/SACC/ is intact."),
+    "E003": ("config",     "Source folder not found",
+             "Check that the NAS is mounted: ls '/Volumes/Team Bank 12'"),
+    "E010": ("pipeline",   "Pipeline exited with a non-zero code",
+             "Expand the log below — look for the first [ERROR] line."),
+    "E011": ("system",     "Pipeline timed out (300 s)",
+             "Split the batch into smaller folders, or run sacc_pipeline.py from terminal."),
+    "E012": ("system",     "Pipeline subprocess crashed",
+             "Run sacc_pipeline.py directly from terminal to see the full traceback."),
+    "E020": ("validation", "Video has no companion JSON",
+             "Stage 8 (Vertex AI) has not yet run on this file."),
+    "E021": ("validation", "Orphaned JSON — no matching video",
+             "The source video may have been moved or deleted."),
+    "E030": ("validation", "Required JSON field missing",
+             "Re-run Stage 8 on this file to regenerate the JSON record."),
+}
+
+class _ErrHelper:
+    """Attach a SACC error code to any response dict."""
+    def _build(self, code, override_msg=None):
+        entry = _ERROR_REGISTRY.get(code, ("unknown", code, "No details available."))
+        category, default_msg, hint = entry
+        return {
+            "error_code": code,
+            "error_category": category,
+            "error": override_msg or default_msg,
+            "hint": hint,
+        }
+    def config(self, code, msg=None):   return self._build(code, msg)
+    def system(self, code, msg=None):   return self._build(code, msg)
+    def pipeline(self, code, msg=None): return self._build(code, msg)
+
+SACC_ERRORS = _ErrHelper()
+
 # ── Optional imports (graceful degradation) ───────────────────────────────────
 try:
     from db import SACCDB
@@ -364,7 +412,7 @@ def rename():
     if _RENAMER_OK and identifier:
         # Vibe renamer — classic mode with identifier
         try:
-            for status in run_vibe_renamer(folder, loc, identifier):
+            for status in run_vibe_renamer(folder, loc, identifier, dry_run=dry_run):
                 if "error" in status:
                     return jsonify({"error": status["error"]}), 500
                 if status.get("done"):
@@ -394,7 +442,7 @@ def rename():
                 renamed.append(item)
                 results.append({
                     "original": item.get("original", ""),
-                    "new":      item.get("new_name", ""),
+                    "new":      item.get("new", ""),
                 })
             return jsonify({
                 "ok": True,
@@ -419,32 +467,45 @@ def pipeline_run():
     folder   = body.get("path", "")
     loc      = body.get("loc", "")
     fcp_mode = body.get("fcp_mode", True)
+    root     = body.get("root", "/Volumes/Team Bank 12/SACC")
 
     if not folder:
-        return jsonify({"error": "path required"}), 400
+        return jsonify(SACC_ERRORS.config("E001", "path required")), 400
 
     script = os.path.join(os.path.dirname(__file__), "sacc_pipeline.py")
     if not os.path.exists(script):
-        return jsonify({"error": "sacc_pipeline.py not found"}), 500
+        return jsonify(SACC_ERRORS.system("E002", "sacc_pipeline.py not found")), 500
 
-    cmd = [sys.executable, script, "--src", folder]
+    if not os.path.isdir(folder):
+        return jsonify(SACC_ERRORS.config("E003", f"Folder not found: {folder}")), 404
+
+    cmd = [sys.executable, script, "--inbox", folder, "--root", root]
     if fcp_mode:
         cmd.append("--fcp")
     if loc:
-        cmd += ["--loc", loc]
+        cmd += ["--loc", loc.strip().upper()]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-        return jsonify({
-            "ok":      result.returncode == 0,
-            "stdout":  result.stdout[-4000:],   # last 4k chars
-            "stderr":  result.stderr[-2000:],
-            "code":    result.returncode,
-        })
+        ok = result.returncode == 0
+        combined = result.stdout[-4000:]
+        if result.stderr:
+            combined += "\n--- STDERR ---\n" + result.stderr[-1000:]
+        resp = {
+            "ok":     ok,
+            "stdout": combined,
+            "code":   result.returncode,
+        }
+        if not ok:
+            resp.update(SACC_ERRORS.pipeline("E010",
+                f"Pipeline exited with code {result.returncode}. "
+                "Check stdout for details."))
+        return jsonify(resp)
     except subprocess.TimeoutExpired:
-        return jsonify({"error": "Pipeline timed out after 300s"}), 504
+        return jsonify(SACC_ERRORS.system("E011", "Pipeline timed out after 300 s — "
+            "reduce batch size or increase timeout")), 504
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify(SACC_ERRORS.system("E012", str(e))), 500
 
 
 # ── SQLite database endpoints ─────────────────────────────────────────────────
@@ -835,6 +896,196 @@ def pipeline_mark_fcp():
         return jsonify({"error": str(e)}), 500
     finally:
         con.close()
+
+
+# ── Error Repository ─────────────────────────────────────────────────────────
+#
+# Persists to SACC/error_log.json. Two collections:
+#   "history"  — timestamped runtime events (auto-appended by the app)
+#   "known"    — pre-documented errors with resolution steps (seeded on first run)
+#
+_ERROR_LOG_PATH = os.path.join(os.path.dirname(__file__), "error_log.json")
+
+_KNOWN_ERRORS = [
+    {
+        "code": "E001", "category": "config",
+        "title": "Path argument missing",
+        "description": "A required 'path' field was not included in the API request body.",
+        "resolution": "Provide a 'path' field pointing to a valid folder on the NAS.",
+        "example": '{"path": "/Volumes/Team Bank 12/Sneeaker Solo"}',
+    },
+    {
+        "code": "E002", "category": "system",
+        "title": "sacc_pipeline.py not found",
+        "description": "The pipeline orchestrator script is missing from the SACC root directory.",
+        "resolution": "Verify /Users/miniman/SACC/sacc_pipeline.py exists. Re-clone the repo if missing.",
+        "example": "",
+    },
+    {
+        "code": "E003", "category": "config",
+        "title": "Source folder not found",
+        "description": "The specified path does not exist on disk — usually the NAS is not mounted.",
+        "resolution": "Open Finder and verify /Volumes/Team Bank 12 is visible. "
+                      "If not, reconnect to the NAS via Network → Connect to Server.",
+        "example": "",
+    },
+    {
+        "code": "E010", "category": "pipeline",
+        "title": "Pipeline exited with non-zero code",
+        "description": "sacc_pipeline.py crashed or encountered an unhandled exception.",
+        "resolution": "Expand the log panel in the Dashboard for the first [ERROR] line. "
+                      "Run sacc_pipeline.py directly from Terminal for the full traceback.",
+        "example": "python3 /Users/miniman/SACC/sacc_pipeline.py --inbox <path> --fcp",
+    },
+    {
+        "code": "E011", "category": "system",
+        "title": "Pipeline timeout (300 s)",
+        "description": "The pipeline took more than 5 minutes — usually a very large batch "
+                       "or a hung Apple Compressor job.",
+        "resolution": "Split the batch into smaller date folders (≤20 files each). "
+                      "Check that Apple Compressor is not already running a job.",
+        "example": "",
+    },
+    {
+        "code": "E012", "category": "system",
+        "title": "Pipeline subprocess crashed",
+        "description": "subprocess.run() raised an unexpected exception before the script could start.",
+        "resolution": "Run python3 /Users/miniman/SACC/sacc_pipeline.py directly to see the full error. "
+                      "Check that Python 3 and all dependencies are installed.",
+        "example": "pip3 install -r /Users/miniman/SACC/requirements.txt",
+    },
+    {
+        "code": "E020", "category": "validation",
+        "title": "No companion JSON (Stage 8 queue)",
+        "description": "A video file exists in the folder but has no matching JSON in the json/ subfolder. "
+                       "This is the expected state for unprocessed footage — not a failure.",
+        "resolution": "Run the Batch Pipeline (Dashboard → Start Batch Pipeline) to send the file "
+                      "through Vertex AI and generate the JSON record.",
+        "example": "",
+    },
+    {
+        "code": "E021", "category": "validation",
+        "title": "Orphaned JSON",
+        "description": "A JSON file exists in json/ but has no matching video file in the folder.",
+        "resolution": "The source video may have been moved or deleted. Either restore the video "
+                      "or delete the orphaned JSON. Use Verify view to inspect.",
+        "example": "",
+    },
+    {
+        "code": "E030", "category": "validation",
+        "title": "Required JSON field missing",
+        "description": "A JSON record is missing one of: original_file, analysed_at, proxy_deleted, Model, SKU.",
+        "resolution": "Re-run Stage 8 (Vertex AI) on the file to regenerate a complete JSON record. "
+                      "If the issue persists, check that gemini_pipeline.py is writing all required fields.",
+        "example": "",
+    },
+    {
+        "code": "E040", "category": "renamer",
+        "title": "Invalid location code",
+        "description": "A location code entered in the Renamer or Pipeline location override field "
+                       "is not in the SACC location database.",
+        "resolution": "Use a valid SACC code: PDM, FLM, MAM, OFS, WOM, VLD, IDR, LBV, WFL, WGN, "
+                      "OMP, SEM, LKL, THL, BRN, INP, UNM, TPA, HVP, AVE, LCN, DOL, GVA, CEL-K, KSM.",
+        "example": "",
+    },
+    {
+        "code": "E041", "category": "renamer",
+        "title": "No video files found in folder",
+        "description": "The Renamer or FCP namer could not find any .mov/.mp4/.m4v files at the "
+                       "specified path.",
+        "resolution": "Check that the path points to a folder containing video files directly "
+                      "(not a parent folder). For FCP libraries, the pipeline now auto-detects "
+                      "'Final Cut Original Media/<date>/' subfolders.",
+        "example": "",
+    },
+    {
+        "code": "E050", "category": "preflight",
+        "title": "Duplicate footage detected",
+        "description": "The Duplicate Scan found two or more files with identical size and checksum.",
+        "resolution": "Review the duplicates listed in the Duplicate Scan panel. Delete the extra "
+                      "copies before running the pipeline to avoid wasting Compressor and Vertex AI quota.",
+        "example": "",
+    },
+    {
+        "code": "E060", "category": "api",
+        "title": "API server offline",
+        "description": "The Flask API on port 5174 is not responding.",
+        "resolution": "Open Terminal and run: bash /Users/miniman/SACC/start_sacc.command\n"
+                      "Or run the API directly: python3 /Users/miniman/SACC/api.py",
+        "example": "bash /Users/miniman/SACC/start_sacc.command",
+    },
+]
+
+def _load_error_log():
+    if not os.path.exists(_ERROR_LOG_PATH):
+        return {"history": [], "known": _KNOWN_ERRORS}
+    try:
+        with open(_ERROR_LOG_PATH) as f:
+            data = json.load(f)
+        # Always refresh known errors from source of truth
+        data["known"] = _KNOWN_ERRORS
+        return data
+    except Exception:
+        return {"history": [], "known": _KNOWN_ERRORS}
+
+def _save_error_log(data):
+    try:
+        with open(_ERROR_LOG_PATH, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
+
+def _append_error_event(code, message, context=""):
+    data = _load_error_log()
+    data["history"].append({
+        "id":        len(data["history"]) + 1,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "code":      code,
+        "message":   message,
+        "context":   context,
+        "resolved":  False,
+    })
+    # Cap history at 500 entries
+    if len(data["history"]) > 500:
+        data["history"] = data["history"][-500:]
+    _save_error_log(data)
+
+
+@app.route("/api/errors")
+def get_errors():
+    return jsonify(_load_error_log())
+
+
+@app.route("/api/errors", methods=["POST"])
+def post_error():
+    body = request.get_json(silent=True) or {}
+    code    = body.get("code", "E000")
+    message = body.get("message", "")
+    context = body.get("context", "")
+    if not message:
+        return jsonify({"error": "message required"}), 400
+    _append_error_event(code, message, context)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/errors/<int:entry_id>", methods=["PATCH"])
+def patch_error(entry_id):
+    """Mark a history entry resolved."""
+    data = _load_error_log()
+    for entry in data["history"]:
+        if entry["id"] == entry_id:
+            entry["resolved"] = True
+            _save_error_log(data)
+            return jsonify({"ok": True})
+    return jsonify({"error": "not found"}), 404
+
+
+@app.route("/api/errors/history", methods=["DELETE"])
+def clear_error_history():
+    data = _load_error_log()
+    data["history"] = []
+    _save_error_log(data)
+    return jsonify({"ok": True, "cleared": True})
 
 
 # ── Dev server ────────────────────────────────────────────────────────────────

@@ -117,17 +117,17 @@ def extract_metadata(file_path):
         # Default fallback if ffprobe fails
         return datetime.now().strftime('%y%m%d'), "Cam"
 
-def run_vibe_renamer(folder_path, loc_code, identifier):
+def run_vibe_renamer(folder_path, loc_code, identifier, dry_run=False):
     if not folder_path or not os.path.exists(folder_path):
         yield {"error": "Invalid folder path."}
         return
-        
+
     store_type = LOCATION_DATA.get(loc_code, {}).get("type", "UNK")
     loc_header = f"{loc_code}-{store_type}"
     identifier_clean = identifier.replace(" ", "-")
 
     files = [f for f in os.listdir(folder_path) if not f.startswith('.') and f.lower().endswith(('.mp4', '.mov', '.m4v'))]
-    
+
     if not files:
         yield {"error": "No valid video files found in the specified directory."}
         return
@@ -139,9 +139,9 @@ def run_vibe_renamer(folder_path, loc_code, identifier):
     for i, filename in enumerate(files):
         file_path = os.path.join(folder_path, filename)
         base_orig, ext = os.path.splitext(filename)
-        
+
         date_str, cam = extract_metadata(file_path)
-        
+
         # Sanitize base_orig by stripping existing SACC standard prefixes.
         # Full prefix  : LOC-TYPE_YYMMDD_ID_CAM_   e.g. PDM-MALL_241221_Air-Jordan_iPhone15ProMax_
         # Partial prefix: LOC-TYPE_               e.g. PDM-MALL_  (partially-named files)
@@ -150,19 +150,21 @@ def run_vibe_renamer(folder_path, loc_code, identifier):
         base_orig_clean = re.sub(full_prefix_pat, "", base_orig)
         if base_orig_clean == base_orig:   # full pattern didn't match — try partial
             base_orig_clean = re.sub(partial_prefix_pat, "", base_orig)
-        
+
         new_name = f"{loc_header}_{date_str}_{identifier_clean}_{cam}_{base_orig_clean}{ext}"
         new_path = os.path.join(folder_path, new_name)
-        
-        os.rename(file_path, new_path)
+
+        if not dry_run:
+            os.rename(file_path, new_path)
         results.append({"original": filename, "new": new_name})
-        
+
         yield {
             "success": True,
             "current": i + 1,
             "total": total_files,
             "original": filename,
             "new": new_name,
+            "dry_run": dry_run,
             "done": False
         }
 

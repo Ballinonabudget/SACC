@@ -117,12 +117,27 @@ def validate_folder(folder: str, json_dir: str = None, full: bool = False) -> di
     json_dir = json_dir or os.path.join(folder, "json")
     json_exists = os.path.isdir(json_dir)
 
-    # Collect video files (top-level only, not _proxy/)
+    # Collect video files — top-level first.
+    # If none found, look one level into subdirectories (handles non-standard
+    # layouts like Sneeaker Solo where videos live in a named subfolder).
+    _SKIP_SUBDIRS = {"json", "_proxy", "_TEST_ENV", ".Spotlight-V100", ".fseventsd"}
+
     videos = {}
-    for f in os.listdir(folder):
-        ext = os.path.splitext(f)[1]
-        if ext in VIDEO_EXTS and not f.startswith("."):
-            videos[stem(f)] = f
+    for f in sorted(os.listdir(folder)):
+        if os.path.splitext(f)[1] in VIDEO_EXTS and not f.startswith("."):
+            if os.path.isfile(os.path.join(folder, f)):
+                videos[stem(f)] = f
+
+    if not videos:
+        for sub in sorted(os.listdir(folder)):
+            sub_path = os.path.join(folder, sub)
+            if (os.path.isdir(sub_path)
+                    and sub not in _SKIP_SUBDIRS
+                    and not sub.startswith(".")):
+                for f in sorted(os.listdir(sub_path)):
+                    if os.path.splitext(f)[1] in VIDEO_EXTS and not f.startswith("."):
+                        if os.path.isfile(os.path.join(sub_path, f)):
+                            videos[stem(f)] = f
 
     # Collect JSON files
     jsons = {}
@@ -148,9 +163,9 @@ def validate_folder(folder: str, json_dir: str = None, full: bool = False) -> di
         }
 
         if not rec["has_json"]:
-            msg = f"{vfile} — no companion JSON (Stage 8 not yet run)"
-            rec["issues"].append(msg)
-            errors.append(msg)
+            # Not an error — these files are in the Stage 8 processing queue.
+            # Tracked separately so the UI can display them as amber/info, not red.
+            rec["issues"].append(f"{vfile} — awaiting Stage 8")
             records.append(rec)
             continue
 
@@ -219,6 +234,9 @@ def validate_folder(folder: str, json_dir: str = None, full: bool = False) -> di
 
         records.append(rec)
 
+    # ── Stage 8 queue (no JSON — not errors, just unprocessed) ──────────────
+    queue = [r["video"] for r in records if not r["has_json"]]
+
     # ── Orphan JSON (no matching video) ───────────────────────────────────────
     orphan_jsons = []
     for jstem, jfile in sorted(jsons.items()):
@@ -247,13 +265,15 @@ def validate_folder(folder: str, json_dir: str = None, full: bool = False) -> di
             "paired":          paired,
             "unpaired":        unpaired,
             "unknown_loc":     unknown_ct,
+            "stage8_queue":    len(queue),
             "loc_confirmed":   confirmed,
             "complete_records":complete,
             "orphan_jsons":    len(orphan_jsons),
             "proxy_deleted":   proxy_done,
         },
-        "errors":   errors,
-        "warnings": warnings,
+        "errors":   errors,   # real failures: parse errors, missing fields
+        "warnings": warnings, # soft issues: relational key mismatch, orphan JSON
+        "queue":    queue,    # unprocessed files awaiting Stage 8 (not errors)
         "orphans":  orphan_jsons,
         "records":  records,
         "full":     full,

@@ -159,7 +159,7 @@ function RenamerView({ mode, accent, folder }) {
     const custom = loc ? loc.header : 'UNKNOWN';
     const today = new Date().toISOString().slice(0,10).replace(/-/g,'');
     const id    = (identifier || 'OriginalName').replace(/\s+/g, '-');
-    return `${custom}_${today}_iPhone15ProMax_${id}.mov`;
+    return `${custom}_${today}_[CamModel]_${id}.mov`;
   }, [locResult, locations, identifier]);
 
   // Filtered locations for dropdown

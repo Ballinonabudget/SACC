@@ -74,6 +74,8 @@
 <script type="text/babel" src="sacc/dashboard-view.jsx?v=4"></script>
 <script type="text/babel" src="sacc/renamer-view.jsx?v=4"></script>
 <script type="text/babel" src="sacc/verify-view.jsx?v=4"></script>
+<script type="text/babel" src="sacc/error-log-view.jsx?v=1"></script>
+<script type="text/babel" src="sacc/docs-view.jsx?v=1"></script>
 </head>
 <body>
 
@@ -140,14 +142,15 @@ const ACCENT_MAP = {
 
 const VIEW_LABELS = {
   gallery: 'Archive', timeline: 'Timeline', import: 'Import', search: 'Search',
-  dashboard: 'Dashboard', renamer: 'Renamer', verify: 'Verify'
+  dashboard: 'Dashboard', renamer: 'Renamer', verify: 'Verify',
+  errorlog: 'Errors', docs: 'Docs',
 };
 
 function App() {
   const P = SACC_PALETTE;
   const saved = (() => { try { return JSON.parse(localStorage.getItem('sacc_v2') || '{}'); } catch { return {}; } })();
 
-  const [activeFolder, setActiveFolder] = useState('/Volumes/Team Bank 12/Sneeaker Solo');
+  const [activeFolder, setActiveFolder] = useState('');
   const [view, setView]           = useState(saved.view || TWEAK_DEFAULTS.defaultView);
   const [mode, setMode]           = useState(saved.mode || TWEAK_DEFAULTS.mode);
   const [accent, setAccent]       = useState(saved.accent || TWEAK_DEFAULTS.accent);
@@ -347,6 +350,8 @@ function App() {
         { id: 'renamer',   icon: '✎', label: 'Renamer' },
         { id: 'verify',    icon: '✓', label: 'Verify' },
         { id: 'import',    icon: '↓', label: 'Import' },
+        { id: 'errorlog',  icon: '⚠', label: 'Errors' },
+        { id: 'docs',      icon: '?', label: 'Docs' },
       ];
 
   return (
@@ -497,6 +502,12 @@ function App() {
               onSelectSneaker={id => setSelectedId(id)}
               externalQuery={collectionQuery}
             />
+          )}
+          {view === 'errorlog' && (
+            <ErrorLogView mode={mode} accent={accentColor} />
+          )}
+          {view === 'docs' && (
+            <DocsView mode={mode} accent={accentColor} />
           )}
           {view === 'import' && mode === 'lite' && (
             <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center',

@@ -101,14 +101,47 @@ def dated_folder(root, date_str):
 
 
 def inbox_files(inbox):
-    """Non-recursive list of video files in the Inbox folder."""
+    """Flat list of video files directly inside inbox/."""
     if not os.path.isdir(inbox):
         return []
     return [
         os.path.join(inbox, f)
-        for f in os.listdir(inbox)
+        for f in sorted(os.listdir(inbox))
         if not f.startswith(".") and Path(f).suffix.lower() in VIDEO_EXTS
+        and os.path.isfile(os.path.join(inbox, f))
     ]
+
+
+def resolve_inbox_folders(inbox):
+    """
+    Return the list of folders the pipeline should process.
+
+    Flat inbox  → [inbox]
+    FCP library → [inbox/Final Cut Original Media/YYYY-MM-DD, ...]  (one per date folder)
+
+    An FCP library is detected when the inbox contains no direct video files
+    but has a 'Final Cut Original Media/' subdirectory with dated subfolders.
+    """
+    if not os.path.isdir(inbox):
+        return []
+
+    if inbox_files(inbox):
+        return [inbox]
+
+    fcpom = os.path.join(inbox, "Final Cut Original Media")
+    if os.path.isdir(fcpom):
+        date_folders = sorted([
+            os.path.join(fcpom, d)
+            for d in os.listdir(fcpom)
+            if not d.startswith(".") and os.path.isdir(os.path.join(fcpom, d))
+        ])
+        if date_folders:
+            total = sum(len(inbox_files(d)) for d in date_folders)
+            print(f"[pipeline] FCP library detected — {total} file(s) across "
+                  f"{len(date_folders)} date folder(s) in 'Final Cut Original Media/'")
+            return date_folders
+
+    return []
 
 
 # ── Pre-Flight gate ───────────────────────────────────────────────────────────
@@ -386,7 +419,7 @@ def stage_proxy_cleanup(dest_dir, json_paths):
 # ── Main orchestrator ─────────────────────────────────────────────────────────
 
 def run_pipeline(inbox, root, loc_code, identifier,
-                 dry_run=False, fcp_mode=False):
+                 dry_run=False, fcp_mode=False, no_move=False):
     """
     Full SACC pipeline — enforces rename-first, proxy-same-name, proxy-delete.
 
@@ -399,6 +432,9 @@ def run_pipeline(inbox, root, loc_code, identifier,
         dry_run    : Print plan only — no renames, moves, compressions, or API calls
         fcp_mode   : Use GPS-aware FCP naming engine (recommended)
                      Token map: [Custom Name]_[Date]_[Model Name]_[Original Name]
+        no_move    : Skip Stage 4 — originals renamed in place, _proxy/ and json/
+                     written alongside them. Use for FCP library sources where
+                     relocating originals would break media links.
     """
     start = time.time()
     mode_label = "FCP (GPS auto-detect)" if fcp_mode else "Classic (manual --loc/--id)"
@@ -414,49 +450,64 @@ def run_pipeline(inbox, root, loc_code, identifier,
         if loc_code:
             print(f"  GPS fallback loc : {loc_code}")
     print(f"  Dry run    : {dry_run}")
+    print(f"  No-move    : {no_move}")
     print("=" * 60)
 
-    files = inbox_files(inbox)
-    if not files:
+    # Resolve which folders actually contain videos.
+    # For FCP libraries this expands to individual date subfolders.
+    effective_inboxes = resolve_inbox_folders(inbox)
+    if not effective_inboxes:
         print("[pipeline] Inbox is empty — nothing to process.")
         return
 
-    print(f"[pipeline] {len(files)} file(s) found in Inbox")
+    total_files = sum(len(inbox_files(d)) for d in effective_inboxes)
+    print(f"[pipeline] {total_files} file(s) found across {len(effective_inboxes)} folder(s)")
 
     if dry_run:
+        for eff_inbox in effective_inboxes:
+            files = inbox_files(eff_inbox)
+            if fcp_mode:
+                for _ in run_fcp_renamer(eff_inbox, loc_override=loc_code or None,
+                                         dry_run=True):
+                    pass
+            else:
+                for f in files:
+                    print(f"  DRY-RUN: would process {os.path.basename(f)}")
+        return
+
+    # ── Per-folder processing ─────────────────────────────────────────────────
+    all_dest_dirs: dict[str, list] = {}
+
+    for eff_inbox in effective_inboxes:
+        files = inbox_files(eff_inbox)
+        if not files:
+            continue
+
+        # ── STAGE 3: Rename first — establishes permanent relational key ──────
         if fcp_mode:
-            # FCP dry-run: show GPS resolution + proposed names
-            for _ in run_fcp_renamer(inbox, loc_override=loc_code or None,
-                                     dry_run=True):
-                pass
+            renamed = stage_rename_fcp(eff_inbox, loc_override=loc_code or None)
         else:
-            for f in files:
-                print(f"  DRY-RUN: would process {os.path.basename(f)}")
-        return
+            renamed = stage_rename(eff_inbox, loc_code, identifier)
 
-    # ── STAGE 3: Rename first — establishes permanent relational key ──────────
-    if fcp_mode:
-        renamed = stage_rename_fcp(inbox, loc_override=loc_code or None)
-    else:
-        renamed = stage_rename(inbox, loc_code, identifier)
+        if not renamed:
+            print(f"[pipeline] Rename stage failed for {eff_inbox} — skipping.")
+            continue
 
-    if not renamed:
-        print("[pipeline] Rename stage failed — aborting.")
-        return
+        # ── STAGE 4: Organise into dated folders (skipped in no-move mode) ──────
+        if no_move:
+            print(f"\n[STAGE 4] Skipped (--no-move) — originals stay in {eff_inbox}")
+            for fp in renamed:
+                all_dest_dirs.setdefault(os.path.dirname(fp), []).append(fp)
+        else:
+            moved = stage_organise(eff_inbox, root, renamed)
+            for fp in moved.values():
+                all_dest_dirs.setdefault(os.path.dirname(fp), []).append(fp)
 
-    # ── STAGE 4: Organise into dated folders ──────────────────────────────────
-    moved     = stage_organise(inbox, root, renamed)
-    dest_files = list(moved.values())
-    if not dest_files:
+    if not all_dest_dirs:
         print("[pipeline] No files organised — aborting.")
         return
 
-    # Group by destination directory (one batch per date folder)
-    dest_dirs = {}
-    for fp in dest_files:
-        dest_dirs.setdefault(os.path.dirname(fp), []).append(fp)
-
-    for dest_dir, batch in dest_dirs.items():
+    for dest_dir, batch in all_dest_dirs.items():
         print(f"\n── Batch: {dest_dir}  ({len(batch)} file(s)) ──")
 
         # ── STAGE 5: Pre-Flight ───────────────────────────────────────────────
@@ -535,7 +586,11 @@ Examples:
                              "FCP mode: GPS fallback when no iPhone clips present.")
     parser.add_argument("--id",      default="",
                         help="Classic mode: shoe identifier (e.g. 'Air Jordan 1 Chicago')")
-    parser.add_argument("--dry-run", action="store_true",   help="Preview only, no changes")
+    parser.add_argument("--dry-run",  action="store_true", help="Preview only, no changes")
+    parser.add_argument("--no-move",  action="store_true",
+                        help="Skip Stage 4 — originals renamed in place, "
+                             "_proxy/ and json/ written alongside them. "
+                             "Use for FCP library sources.")
     args = parser.parse_args()
 
     # Validation
@@ -556,4 +611,5 @@ Examples:
         identifier = args.id,
         dry_run    = args.dry_run,
         fcp_mode   = args.fcp,
+        no_move    = args.no_move,
     )

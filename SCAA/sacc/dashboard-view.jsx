@@ -14,7 +14,9 @@ function DashboardView({ mode, accent, folder, setFolder }) {
   const [pipelineRes, setPipelineRes]   = React.useState(null);
   const [pipelineRunning, setPipelineRunning] = React.useState(false);
   const [pipelineLoc, setPipelineLoc]   = React.useState('');
-  const [folderInput, setFolderInput]   = React.useState(folder || DEFAULT_FOLDER);
+  // Folder is session-only — not persisted to localStorage.
+  // Starts blank so user consciously chooses a path each session.
+  const [folderInput, setFolderInput]   = React.useState('');
   const [apiOnline, setApiOnline]       = React.useState(null);
 
   // Check API health on mount
@@ -66,10 +68,19 @@ function DashboardView({ mode, accent, folder, setFolder }) {
       });
   }, [folderInput, runPreflightFor]);
 
-  React.useEffect(() => { if (apiOnline) loadStats(); }, [apiOnline]);
+  // Only auto-load if a folder is already set (it won't be on fresh session)
+  React.useEffect(() => { if (apiOnline && folderInput.trim()) loadStats(); }, [apiOnline]);
 
   // Keep manual button as a re-run option
   const runPreflight = () => runPreflightFor(folderInput);
+
+  const clearFolder = () => {
+    setFolderInput('');
+    setDbStats(null);
+    setStatsError('');
+    setPreflight(null);
+    setPipelineRes(null);
+  };
 
   const runPipeline = () => {
     setPipelineRunning(true);
@@ -134,8 +145,13 @@ function DashboardView({ mode, accent, folder, setFolder }) {
 
       {/* Folder input */}
       <div style={{ background: P.panel, border: `1px solid ${P.border}`, borderRadius: 10, padding: '12px 14px' }}>
-        <div style={{ fontSize: 9, color: P.muted, fontFamily: 'Space Mono, monospace', marginBottom: 6, letterSpacing: '0.06em' }}>
-          SOURCE FOLDER
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6 }}>
+          <span style={{ fontSize: 9, color: P.muted, fontFamily: 'Space Mono, monospace', letterSpacing: '0.06em' }}>
+            SOURCE FOLDER
+          </span>
+          <span style={{ fontSize: 9, color: P.muted, fontFamily: '-apple-system, sans-serif' }}>
+            Session-only — cleared on close · press Enter or Refresh to scan
+          </span>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <input
@@ -145,10 +161,17 @@ function DashboardView({ mode, accent, folder, setFolder }) {
             style={{ flex: 1, border: `1px solid ${P.border}`, borderRadius: 6, padding: '6px 10px',
               fontSize: 12, fontFamily: 'Space Mono, monospace', color: P.text,
               background: P.bg, outline: 'none' }}
-            placeholder="/Volumes/Team Bank 12/Sneeaker Solo"
+            placeholder="Paste a folder path, e.g. /Volumes/Team Bank 12/…"
           />
-          <Btn onClick={() => loadStats()} disabled={loading}>
+          {/* Refresh — scans the folder and re-runs the duplicate check */}
+          <Btn onClick={() => loadStats()} disabled={loading || !folderInput.trim()}
+            title="Scan folder: counts videos, checks JSON pairing, triggers duplicate scan">
             {loading ? '…' : '↺ Refresh'}
+          </Btn>
+          {/* Clear — resets all metrics; does NOT affect files on disk */}
+          <Btn onClick={clearFolder} disabled={!folderInput && !dbStats}
+            title="Clear path and reset all metrics (no files are changed)">
+            ✕ Clear
           </Btn>
         </div>
       </div>
@@ -192,18 +215,85 @@ function DashboardView({ mode, accent, folder, setFolder }) {
         ))}
       </div>
 
-      {/* Errors / warnings from validator */}
+      {/* KPI legend — always visible, explains what each card means */}
+      <div style={{ background: P.panel, border: `1px solid ${P.border}`, borderRadius: 8,
+        padding: '10px 14px', display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '6px 16px' }}>
+        {[
+          ['Total Videos',  'All .mov/.mp4 files in the source folder'],
+          ['JSON Paired',   'Videos that have a Stage 8 AI JSON file'],
+          ['Needs Stage 8', 'Videos with no JSON — Vertex AI not yet run'],
+          ['Loc Confirmed', 'JSON records with a confirmed retail location'],
+          ['Loc Unknown',   'JSON records where location = UNKNOWN (Stage 10 pending)'],
+          ['Duplicates',    'Exact-match duplicate clips (pre-flight scan)'],
+        ].map(([label, desc]) => (
+          <div key={label} style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, color: P.muted, fontFamily: 'Space Mono, monospace', letterSpacing: '0.05em' }}>
+              {label}
+            </span>
+            <span style={{ fontSize: 10, color: P.muted, fontFamily: '-apple-system, sans-serif', lineHeight: 1.4 }}>
+              {desc}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Stage 8 queue — amber/info, not errors */}
+      {dbStats?.queue?.length > 0 && (
+        <div style={{ background: P.warning + '10', border: `1px solid ${P.warning}33`,
+          borderRadius: 8, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 10, color: P.warning, fontFamily: 'Space Mono, monospace', fontWeight: 700 }}>
+                STAGE 8 QUEUE — {dbStats.queue.length} file{dbStats.queue.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+            <span style={{ fontSize: 9, color: P.muted, fontFamily: 'Space Mono, monospace' }}>
+              [E020] expected · not an error
+            </span>
+          </div>
+          <div style={{ fontSize: 11, color: P.muted, fontFamily: '-apple-system, sans-serif', lineHeight: 1.5 }}>
+            These files have no companion JSON because Vertex AI (Stage 8) has not yet run on them.
+            This is the normal state for unprocessed footage — run the Batch Pipeline to generate JSON for each file.
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {dbStats.queue.slice(0, 4).map((f, i) => (
+              <div key={i} style={{ fontSize: 10, color: P.warning, fontFamily: 'Space Mono, monospace' }}>
+                ⏳ {f}
+              </div>
+            ))}
+            {dbStats.queue.length > 4 && (
+              <div style={{ fontSize: 10, color: P.muted, fontFamily: 'Space Mono, monospace' }}>
+                … and {dbStats.queue.length - 4} more awaiting Stage 8
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Real errors — parse failures, missing required fields */}
       {dbStats?.errors?.length > 0 && (
         <div style={{ background: P.error + '10', border: `1px solid ${P.error}33`,
           borderRadius: 8, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <div style={{ fontSize: 10, color: P.error, fontFamily: 'Space Mono, monospace', marginBottom: 2 }}>
-            ERRORS ({dbStats.errors.length})
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 2 }}>
+            <span style={{ fontSize: 10, color: P.error, fontFamily: 'Space Mono, monospace', fontWeight: 700 }}>
+              ERRORS ({dbStats.errors.length})
+            </span>
+            <span style={{ fontSize: 9, color: P.muted, fontFamily: 'Space Mono, monospace' }}>
+              JSON parse failures or missing required fields — action required
+            </span>
           </div>
           {dbStats.errors.slice(0, 5).map((e, i) => (
             <div key={i} style={{ fontSize: 11, color: P.error, fontFamily: '-apple-system, sans-serif' }}>✗ {e}</div>
           ))}
+          {dbStats.errors.length > 5 && (
+            <div style={{ fontSize: 10, color: P.muted, fontFamily: 'Space Mono, monospace' }}>
+              … and {dbStats.errors.length - 5} more
+            </div>
+          )}
         </div>
       )}
+
+      {/* Warnings — soft issues like orphan JSONs */}
       {dbStats?.warnings?.length > 0 && (
         <div style={{ background: P.warning + '10', border: `1px solid ${P.warning}33`,
           borderRadius: 8, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -244,12 +334,20 @@ function DashboardView({ mode, accent, folder, setFolder }) {
             ↺ Re-scan
           </Btn>
         </div>
-        <div style={{ fontSize: 11, color: P.muted, fontFamily: '-apple-system, sans-serif', marginBottom: preflightRes ? 10 : 0 }}>
-          {!preflightRes && !preflightRunning
-            ? 'Runs automatically when a folder is loaded'
+        <div style={{ fontSize: 11, color: P.muted, fontFamily: '-apple-system, sans-serif',
+          lineHeight: 1.5, marginBottom: preflightRes ? 10 : 0 }}>
+          {preflightRunning
+            ? 'Scanning for exact-match duplicates…'
             : preflightRes?.clean
             ? 'No exact-match duplicate footage detected — safe to start batch processing.'
-            : preflightRunning ? 'Scanning for exact-match duplicates…' : ''}
+            : !preflightRes
+            ? <>
+                Standalone pre-flight integrity check. Compares files by size + partial checksum
+                (not just filename) to catch exact-match duplicates before they waste Compressor
+                quota or Vertex AI credits. Runs automatically when a folder is loaded.
+                Use <strong>Re-scan</strong> after adding or removing files.
+              </>
+            : ''}
         </div>
         {preflightRes && !preflightRes.clean && !preflightRes.error && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -279,40 +377,78 @@ function DashboardView({ mode, accent, folder, setFolder }) {
           <div style={{ fontSize: 11, color: P.muted, fontFamily: '-apple-system, sans-serif', marginBottom: 12 }}>
             Runs all pipeline stages: rename → proxy → Vertex AI → JSON index → Stage 10 location confirm
           </div>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          <div style={{ marginBottom: 4 }}>
+            <div style={{ fontSize: 9, color: P.muted, fontFamily: 'Space Mono, monospace',
+              letterSpacing: '0.06em', marginBottom: 4 }}>
+              LOCATION OVERRIDE  <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>— optional</span>
+            </div>
             <input
               value={pipelineLoc}
-              onChange={e => setPipelineLoc(e.target.value)}
-              placeholder="Location override (e.g. PDM) — optional"
-              style={{ flex: 1, border: `1px solid ${P.border}`, borderRadius: 6, padding: '6px 10px',
+              onChange={e => setPipelineLoc(e.target.value.toUpperCase())}
+              placeholder="SACC location code, e.g. PDM · FLM · MAM · OFS"
+              style={{ width: '100%', border: `1px solid ${P.border}`, borderRadius: 6, padding: '6px 10px',
                 fontSize: 12, fontFamily: 'Space Mono, monospace', color: P.text,
-                background: P.bg, outline: 'none' }}
+                background: P.bg, outline: 'none', boxSizing: 'border-box',
+                textTransform: 'uppercase', marginBottom: 4 }}
             />
+            <div style={{ fontSize: 10, color: P.muted, fontFamily: '-apple-system, sans-serif', lineHeight: 1.5 }}>
+              Must be a valid SACC code from the location database (PDM = Paddock Mall, FLM = Florida Mall, etc.).
+              Sets the <code style={{ fontFamily: 'Space Mono, monospace', fontSize: 9 }}>[Custom Name]</code> token
+              in the FCP filename — e.g. <code style={{ fontFamily: 'Space Mono, monospace', fontSize: 9 }}>PDM-MALL_20241221_iPhone15ProMax_IMG_3423.mov</code>.
+              Leave blank to let Vertex AI detect location from video content (Stage 8), which uses
+              <code style={{ fontFamily: 'Space Mono, monospace', fontSize: 9 }}> UNKNOWN_</code> as a placeholder until Stage 10 confirms it.
+              This is <em>not</em> a free-text label — entering "b-roll" here will fail validation.
+            </div>
           </div>
+          <div style={{ marginBottom: 12 }} />
           <Btn primary onClick={runPipeline} disabled={pipelineRunning || !apiOnline}
             style={{ background: '#34c759', fontSize: 13, padding: '8px 20px' }}>
             {pipelineRunning ? '⟳ Pipeline Running…' : '▶  Start Batch Pipeline'}
           </Btn>
 
           {pipelineRes && (
-            <div style={{ marginTop: 12 }}>
-              {pipelineRes.error
-                ? <div style={{ fontSize: 11, color: P.error }}>{pipelineRes.error}</div>
-                : <div>
-                    <div style={{ fontSize: 12, color: pipelineRes.ok ? P.success : P.error,
-                      fontWeight: 600, fontFamily: '-apple-system, sans-serif', marginBottom: 8 }}>
-                      {pipelineRes.ok ? '✓ Pipeline completed' : '✗ Pipeline failed (see log)'}
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {/* Status line + error code badge */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 12, fontWeight: 600,
+                  color: pipelineRes.ok ? P.success : P.error,
+                  fontFamily: '-apple-system, sans-serif' }}>
+                  {pipelineRes.ok ? '✓ Pipeline completed' : '✗ Pipeline failed'}
+                </span>
+                {pipelineRes.error_code && (
+                  <span style={{ fontSize: 9, fontFamily: 'Space Mono, monospace', fontWeight: 700,
+                    color: P.error, background: P.error + '18',
+                    padding: '2px 6px', borderRadius: 3 }}>
+                    {pipelineRes.error_code}
+                  </span>
+                )}
+              </div>
+              {/* Error detail + hint */}
+              {(pipelineRes.error || pipelineRes.hint) && (
+                <div style={{ background: P.error + '10', border: `1px solid ${P.error}33`,
+                  borderRadius: 6, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {pipelineRes.error && (
+                    <div style={{ fontSize: 11, color: P.error, fontFamily: '-apple-system, sans-serif' }}>
+                      {pipelineRes.error}
                     </div>
-                    {pipelineRes.stdout && (
-                      <div style={{ background: '#0d0d0f', borderRadius: 6, padding: 10, maxHeight: 180, overflowY: 'auto' }}>
-                        <pre style={{ fontSize: 10, fontFamily: 'Space Mono, monospace', color: '#7ae',
-                          margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
-                          {pipelineRes.stdout}
-                        </pre>
-                      </div>
-                    )}
-                  </div>
-              }
+                  )}
+                  {pipelineRes.hint && (
+                    <div style={{ fontSize: 10, color: P.muted, fontFamily: '-apple-system, sans-serif' }}>
+                      → {pipelineRes.hint}
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* stdout / stderr log */}
+              {pipelineRes.stdout && (
+                <div style={{ background: '#0d0d0f', borderRadius: 6, padding: 10,
+                  maxHeight: 200, overflowY: 'auto' }}>
+                  <pre style={{ fontSize: 10, fontFamily: 'Space Mono, monospace',
+                    color: '#7ae', margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+                    {pipelineRes.stdout}
+                  </pre>
+                </div>
+              )}
             </div>
           )}
         </div>
