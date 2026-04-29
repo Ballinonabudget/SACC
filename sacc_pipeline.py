@@ -303,14 +303,19 @@ def stage_compress(dest_dir):
 
 def stage_vertex(compress_results, dest_dir):
     """
-    STAGE 8 — Upload each ready proxy to Vertex AI / Gemini API.
+    STAGE 8 — Route proxies to Vertex AI via the logic router.
 
-    The JSON written for each file uses the ORIGINAL (renamed) filename
-    as both its filename stem and its internal 'original_file' field,
-    creating the permanent relational key back to the hi-res master.
+    The router automatically selects:
+      < 50 files  → standard per-file API (immediate)
+      >= 50 files → Vertex AI Batch Prediction (async, 50% cheaper)
+
+    JSON written per file uses the ORIGINAL renamed filename as stem
+    (permanent relational key back to the hi-res master).
 
     Returns list of paths to written JSON files.
     """
+    from gemini_pipeline import route_analysis, BATCH_THRESHOLD
+
     json_dir = os.path.join(dest_dir, "json")
     os.makedirs(json_dir, exist_ok=True)
 
@@ -321,76 +326,64 @@ def stage_vertex(compress_results, dest_dir):
         print("\n[STAGE 8] No proxies ready — skipping Vertex AI analysis.")
         return []
 
-    print(f"\n[STAGE 8] Vertex AI analysis — {len(ready)} proxy file(s)")
+    n = len(ready)
+    mode = "Batch API (async)" if n >= BATCH_THRESHOLD else "Standard API"
+    print(f"\n[STAGE 8] Vertex AI analysis — {n} proxy file(s) via {mode}")
+
+    # Build the input structures the router expects
+    proxy_files  = [r["proxy_path"] for r in ready]
+    original_map = {
+        r["proxy_path"]: (r["original_file"], r["original_path"])
+        for r in ready
+    }
+
+    results = route_analysis(proxy_files, original_map)
+
+    # ── Write JSON files + print summary ─────────────────────────────────────
     saved = []
-
-    for r in ready:
-        proxy_path     = r["proxy_path"]
-        original_file  = r["original_file"]     # ← relational key
-        original_path  = r["original_path"]
-
-        print(f"  → {original_file}")
-
-        result = analyze_sneaker_video(
-            proxy_path    = proxy_path,
-            original_file = original_file,
-            original_path = original_path,
-        )
-
+    for result in results:
         if result.get("error"):
             print(f"  [vertex] ERROR: {result['error']}")
             continue
 
-        # JSON stem == source filename stem (relational key)
-        json_stem = Path(original_file).stem
-        json_path = os.path.join(json_dir, f"{json_stem}.json")
+        original_file = result.get("original_file", "")
+        json_stem     = Path(original_file).stem
+        json_path     = os.path.join(json_dir, f"{json_stem}.json")
 
         with open(json_path, "w") as f:
             json.dump(result, f, indent=2)
 
-        print(f"  [vertex] ✓  {json_stem}.json")
-        print(f"             Model={result.get('Model')}  "
-              f"SKU={result.get('SKU')}  "
-              f"Size={result.get('Size')}  "
-              f"Price={result.get('Price')}")
-
-        # Location fields — from visual signage + audio transcript
-        loc_vis  = result.get("Location_Visual")  or ""
-        loc_aud  = result.get("Location_Audio")   or ""
         loc_code = result.get("loc_code_confirmed") or ""
         loc_conf = result.get("Location_Confidence") or ""
-        if loc_code:
-            print(f"             Location={loc_code}  "
-                  f"confidence={loc_conf}  visual='{loc_vis}'")
-        elif loc_vis:
-            print(f"             Location_Visual='{loc_vis}'  "
-                  f"confidence={loc_conf}  (no code match)")
-        else:
-            print(f"             Location: not identified from video")
-
+        loc_vis  = result.get("Location_Visual") or ""
+        print(f"  ✓  {json_stem}.json  "
+              f"Model={result.get('Model')}  SKU={result.get('SKU')}"
+              + (f"  loc={loc_code}({loc_conf})" if loc_code else
+                 f"  loc=unresolved" if not loc_vis else
+                 f"  loc_visual='{loc_vis}'({loc_conf})"))
         saved.append(json_path)
 
-    print(f"  [vertex] {len(saved)} JSON file(s) written to {json_dir}")
+    print(f"  [vertex] {len(saved)}/{n} JSON file(s) written → {json_dir}")
 
-    # ── Stage 10 trigger: if any UNKNOWN filenames exist and loc was confirmed
-    unknown_files = [jp for jp in saved
-                     if os.path.basename(jp).startswith("UNKNOWN")]
-    confirmed_count = 0
-    for jp in saved:
-        try:
-            with open(jp) as fh:
-                d = json.load(fh)
-            if d.get("loc_code_confirmed"):
-                confirmed_count += 1
-        except Exception:
-            pass
-
-    if unknown_files and confirmed_count:
-        print(f"\n  [vertex] {confirmed_count} location(s) confirmed by AI — "
-              f"run Stage 10 to apply:")
-        print(f"    python fcp_namer.py --apply-loc --folder {dest_dir}")
+    # ── Stage 10 hint ─────────────────────────────────────────────────────────
+    unknown_with_loc = sum(
+        1 for jp in saved
+        if os.path.basename(jp).startswith("UNKNOWN")
+        and _json_has_loc(jp)
+    )
+    if unknown_with_loc:
+        print(f"\n  [vertex] {unknown_with_loc} UNKNOWN file(s) have confirmed "
+              f"locations — Stage 10 will rename them automatically.")
 
     return saved
+
+
+def _json_has_loc(json_path):
+    try:
+        with open(json_path) as fh:
+            return bool(json.load(fh).get("loc_code_confirmed"))
+    except Exception:
+        return False
 
 
 def stage_proxy_cleanup(dest_dir, json_paths):

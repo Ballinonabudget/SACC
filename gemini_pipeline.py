@@ -1,9 +1,16 @@
 """
 gemini_pipeline.py — SACC Vertex AI / Gemini Video Analysis
 =============================================================
-Receives a proxy file path and the original (renamed) source filename.
-Uploads the proxy to Vertex AI, extracts shoe metadata, writes JSON,
-and signals the pipeline to delete the proxy.
+Receives proxy file paths and original (renamed) source filenames.
+Routes to standard API or Vertex AI Batch Prediction based on file count.
+
+Logic Router
+------------
+  < 50 files  → Standard API   (immediate, per-file upload + inference)
+  >= 50 files → Batch API      (async JSONL job, 50% cost discount)
+
+The threshold is controlled by BATCH_THRESHOLD (default 50).
+Batch mode requires GCS_BUCKET in .env. If not set, falls back to standard.
 
 JSON output schema
 ------------------
@@ -13,28 +20,19 @@ as its stem, making it the permanent relational key back to the hi-res master:
   Proxy uploaded : _proxy/FLM-MALL_260423_Air-Jordan-1-Chicago_iPhone15ProMax_IMG_3439.mp4
   JSON written   : json/FLM-MALL_260423_Air-Jordan-1-Chicago_iPhone15ProMax_IMG_3439.json
 
-  JSON content:
-  {
-    "original_file"  : "FLM-MALL_260423_Air-Jordan-1-Chicago_iPhone15ProMax_IMG_3439.mov",
-    "original_path"  : "/Volumes/Team Bank 12/SACC/2026/260423/<filename>",
-    "proxy_file"     : "FLM-MALL_260423_..._IMG_3439.mp4",
-    "analysed_at"    : "2026-04-23T14:00:00Z",
-    "proxy_deleted"  : false,   ← set to true by sacc_pipeline after cleanup
-    "Model"          : "Air Jordan 1 Retro High OG",
-    "SKU"            : "555088-101",
-    "Size"           : "10.5",
-    "Price"          : "$180"
-  }
-
-Environment
------------
-  Phase 1-2 (current)  : GEMINI_API_KEY  → google.generativeai
-  Phase 3 (next)       : VERTEX_PROJECT_ID + VERTEX_LOCATION → vertexai SDK
+Environment (.env)
+------------------
+  GEMINI_API_KEY     → Gemini API (Phase 1/2 fallback)
+  VERTEX_PROJECT_ID  → Vertex AI project (required for batch mode)
+  VERTEX_LOCATION    → us-central1 (default)
+  VERTEX_MODEL       → gemini-2.5-pro (default)
+  GCS_BUCKET         → GCS bucket name for batch I/O (required for batch mode)
 """
 
 import os
 import json
 import time
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
@@ -44,7 +42,9 @@ _vertex_project  = os.getenv("VERTEX_PROJECT_ID")
 _vertex_location = os.getenv("VERTEX_LOCATION", "us-central1")
 _gemini_key      = os.getenv("GEMINI_API_KEY")
 
-_USE_VERTEX = bool(_vertex_project)
+_USE_VERTEX  = bool(_vertex_project)
+_GCS_BUCKET  = os.getenv("GCS_BUCKET", "")
+BATCH_THRESHOLD = int(os.getenv("BATCH_THRESHOLD", "50"))
 
 if _USE_VERTEX:
     try:
@@ -334,9 +334,215 @@ def _utcnow():
     return datetime.now(timezone.utc).isoformat()
 
 
+# ── Logic Router ─────────────────────────────────────────────────────────────
+#
+#  route_analysis() is the single entry point for Stage 8.
+#  It inspects the file count and dispatches to the correct backend:
+#
+#    n < BATCH_THRESHOLD  →  _standard_batch()   immediate, per-file
+#    n >= BATCH_THRESHOLD →  _vertex_batch()      async JSONL, 50% cheaper
+#
+#  Both paths return the same list-of-dicts format so stage_vertex() in
+#  sacc_pipeline.py doesn't need to know which path ran.
+#
+#  original_map: { proxy_path: (original_file, original_path) }
+#
+
+def route_analysis(proxy_files: list, original_map: dict) -> list:
+    """
+    Dispatch proxy files to standard or batch Vertex AI analysis.
+
+    Args:
+        proxy_files  : list of absolute paths to proxy .mp4 files
+        original_map : { proxy_path: (original_file, original_path) }
+
+    Returns:
+        list of result dicts — same schema as analyze_sneaker_video()
+    """
+    n = len(proxy_files)
+    if n == 0:
+        return []
+
+    can_batch = bool(_GCS_BUCKET and _vertex_project)
+
+    if n < BATCH_THRESHOLD or not can_batch:
+        reason = f"n={n} < threshold={BATCH_THRESHOLD}" if n < BATCH_THRESHOLD \
+                 else "GCS_BUCKET or VERTEX_PROJECT_ID not set"
+        print(f"\n[router] {n} file(s) → Standard API  ({reason})")
+        return _standard_batch(proxy_files, original_map)
+    else:
+        print(f"\n[router] {n} file(s) → Vertex AI Batch Prediction"
+              f"  (threshold={BATCH_THRESHOLD}, ~50% cost saving)")
+        try:
+            return _vertex_batch(proxy_files, original_map)
+        except Exception as e:
+            print(f"[router] Batch job failed: {e}")
+            print("[router] Falling back to Standard API")
+            return _standard_batch(proxy_files, original_map)
+
+
+# ── Standard path ─────────────────────────────────────────────────────────────
+
+def _standard_batch(proxy_files: list, original_map: dict) -> list:
+    """Sequential per-file standard API calls."""
+    results = []
+    for i, proxy_path in enumerate(proxy_files, 1):
+        orig_file, orig_path = original_map.get(proxy_path, (None, None))
+        print(f"  [{i}/{len(proxy_files)}] {Path(proxy_path).name}")
+        result = analyze_sneaker_video(proxy_path, orig_file, orig_path)
+        results.append(result)
+    return results
+
+
+# ── Batch Prediction path ─────────────────────────────────────────────────────
+
+def _vertex_batch(proxy_files: list, original_map: dict) -> list:
+    """
+    Vertex AI Batch Prediction:
+      1. Upload proxies to GCS
+      2. Write JSONL requests file to GCS
+      3. Submit BatchPredictionJob (async)
+      4. Poll until terminal state
+      5. Parse output JSONL from GCS
+      6. Return results list
+    """
+    try:
+        from google.cloud import storage as gcs_lib
+        import google.cloud.aiplatform as aip
+    except ImportError as e:
+        raise RuntimeError(
+            f"Batch mode requires google-cloud-storage and google-cloud-aiplatform: {e}\n"
+            "  pip install google-cloud-storage google-cloud-aiplatform"
+        )
+
+    job_id  = f"sacc-{int(time.time())}"
+    prefix  = f"sacc-batch/{job_id}"
+    bucket_name = _GCS_BUCKET
+
+    gcs_client = gcs_lib.Client(project=_vertex_project)
+    bucket     = gcs_client.bucket(bucket_name)
+
+    # ── Step 1: Upload proxies to GCS ────────────────────────────────────────
+    print(f"[batch] Uploading {len(proxy_files)} proxies → gs://{bucket_name}/{prefix}/input/")
+    gcs_uris = {}
+    for proxy_path in proxy_files:
+        blob_name = f"{prefix}/input/{Path(proxy_path).name}"
+        blob = bucket.blob(blob_name)
+        blob.upload_from_filename(str(proxy_path), content_type="video/mp4")
+        gcs_uris[proxy_path] = f"gs://{bucket_name}/{blob_name}"
+        print(f"  ↑ {Path(proxy_path).name}")
+
+    # ── Step 2: Build JSONL ───────────────────────────────────────────────────
+    lines = []
+    for proxy_path in proxy_files:
+        lines.append(json.dumps({
+            "request": {
+                "contents": [{
+                    "role": "user",
+                    "parts": [
+                        {"fileData": {
+                            "mimeType": "video/mp4",
+                            "fileUri":  gcs_uris[proxy_path],
+                        }},
+                        {"text": _ANALYSIS_PROMPT},
+                    ],
+                }],
+                "generationConfig": {"responseMimeType": "application/json"},
+            }
+        }))
+
+    jsonl_blob = f"{prefix}/requests.jsonl"
+    bucket.blob(jsonl_blob).upload_from_string(
+        "\n".join(lines), content_type="application/jsonl"
+    )
+    input_uri  = f"gs://{bucket_name}/{jsonl_blob}"
+    output_uri = f"gs://{bucket_name}/{prefix}/output/"
+    print(f"[batch] JSONL ready → {input_uri}  ({len(lines)} requests)")
+
+    # ── Step 3: Submit job ────────────────────────────────────────────────────
+    model_name = (f"projects/{_vertex_project}/locations/{_vertex_location}"
+                  f"/publishers/google/models/"
+                  f"{os.getenv('VERTEX_MODEL', 'gemini-2.5-pro')}")
+
+    aip.init(project=_vertex_project, location=_vertex_location)
+    job = aip.BatchPredictionJob.create(
+        job_display_name = job_id,
+        model_name       = model_name,
+        instances_format = "jsonl",
+        predictions_format = "jsonl",
+        gcs_source       = [input_uri],
+        gcs_destination_prefix = output_uri,
+        sync             = False,
+    )
+    print(f"[batch] Job submitted → {job.name}")
+
+    # ── Step 4: Poll ──────────────────────────────────────────────────────────
+    _TERMINAL = {"JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED",
+                 "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"}
+    max_wait, poll_interval, elapsed = 7200, 60, 0
+    while elapsed < max_wait:
+        job.refresh()
+        state = job.state.name
+        pct   = getattr(job, "completion_stats", None)
+        print(f"  [batch] {state}  elapsed={elapsed}s"
+              + (f"  {pct}" if pct else ""))
+        if state in _TERMINAL:
+            break
+        time.sleep(poll_interval)
+        elapsed += poll_interval
+
+    if job.state.name != "JOB_STATE_SUCCEEDED":
+        raise RuntimeError(f"Batch job ended with state: {job.state.name}")
+
+    print(f"[batch] Job complete — parsing results from {output_uri}")
+
+    # ── Step 5: Parse output JSONL ────────────────────────────────────────────
+    blobs = list(gcs_client.list_blobs(bucket_name, prefix=f"{prefix}/output/"))
+    raw_lines = []
+    for blob in blobs:
+        if blob.name.endswith((".jsonl", ".json")):
+            raw_lines.extend(
+                [l for l in blob.download_as_text().splitlines() if l.strip()]
+            )
+
+    results = []
+    for i, line in enumerate(raw_lines):
+        proxy_path = proxy_files[i] if i < len(proxy_files) else None
+        orig_file, orig_path = original_map.get(proxy_path, (None, None))
+        base = {
+            "original_file": orig_file or (Path(proxy_path).name if proxy_path else ""),
+            "original_path": orig_path or "",
+            "proxy_file":    Path(proxy_path).name if proxy_path else "",
+            "analysed_at":   _utcnow(),
+            "proxy_deleted": False,
+        }
+        try:
+            obj  = json.loads(line)
+            # Vertex batch output: {"request":{...}, "response":{"candidates":[...]}}
+            text = (obj.get("response", {})
+                       .get("candidates", [{}])[0]
+                       .get("content", {})
+                       .get("parts", [{}])[0]
+                       .get("text", ""))
+            results.append({**base, **_parse_response(text)})
+        except Exception as e:
+            results.append({**base, "error": str(e)})
+
+    print(f"[batch] {len(results)} result(s) parsed")
+    return results
+
+
 # ── CLI test ──────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    can_batch = bool(_GCS_BUCKET and _vertex_project)
     print("[gemini] Pipeline initialised.")
-    print(f"  Backend      : {'Vertex AI' if _USE_VERTEX else 'Gemini API'}")
-    print(f"  Vertex proj  : {_vertex_project or '(not set)'}")
-    print(f"  Gemini key   : {'set' if _gemini_key else '(not set)'}")
+    print(f"  Backend        : {'Vertex AI' if _USE_VERTEX else 'Gemini API'}")
+    print(f"  Vertex project : {_vertex_project or '(not set)'}")
+    print(f"  Gemini key     : {'set' if _gemini_key else '(not set)'}")
+    print(f"  GCS bucket     : {_GCS_BUCKET or '(not set — batch mode disabled)'}")
+    print(f"  Batch threshold: {BATCH_THRESHOLD} files")
+    print(f"  Batch mode     : {'ENABLED' if can_batch else 'DISABLED (set GCS_BUCKET + VERTEX_PROJECT_ID)'}")
+    print()
+    print("  Router logic:")
+    print(f"    n < {BATCH_THRESHOLD}  → Standard API  (immediate)")
+    print(f"    n >= {BATCH_THRESHOLD} → Vertex AI Batch Prediction  (~50% cheaper)")
