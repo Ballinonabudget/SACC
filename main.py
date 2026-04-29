@@ -478,8 +478,25 @@ def pipeline_run(body: PipelineRunBody):
 
 # ── Phase 7 — SSE streaming rename ───────────────────────────────────────────
 
-PHASE7_SCRIPT = "/Volumes/Team Bank 12/Sneeaker Solo/phase7_renamer.py"
-PHASE8_SCRIPT = "/Volumes/Team Bank 12/Sneeaker Solo/phase8_archival.py"
+_SACC_ROOT = os.path.dirname(__file__)  # /Users/miniman/SACC
+
+# Phase 7/8: prefer repo scripts over NAS path (NAS scripts may not exist)
+def _resolve_phase_script(nas_path: str, repo_fallback: str) -> str:
+    if os.path.isfile(nas_path):
+        return nas_path
+    local = os.path.join(_SACC_ROOT, repo_fallback)
+    if os.path.isfile(local):
+        return local
+    return nas_path  # will fail at runtime with a clear FileNotFoundError
+
+PHASE7_SCRIPT = _resolve_phase_script(
+    "/Volumes/Team Bank 12/Sneeaker Solo/phase7_renamer.py",
+    "sacc_pipeline.py",   # repo fallback
+)
+PHASE8_SCRIPT = _resolve_phase_script(
+    "/Volumes/Team Bank 12/Sneeaker Solo/phase8_archival.py",
+    "sacc_pipeline.py",   # repo fallback
+)
 
 
 @app.get("/api/pipeline/run-phase7")
@@ -862,6 +879,236 @@ def serve_video(path: str = Query(""), file: str = Query("")):
     if safe_file.parent != safe_dir or not safe_file.is_file():
         raise HTTPException(404, "File not found")
     return FileResponse(str(safe_file))
+
+
+# ── Error Repository ──────────────────────────────────────────────────────────
+
+# Pre-documented known error codes — edit here to add / update entries.
+_KNOWN_ERRORS = [
+    # Config
+    {"code": "CFG-001", "category": "config",     "title": "GEMINI_API_KEY not set",
+     "description": "The GEMINI_API_KEY environment variable is missing from .env. Stage 8 (Vertex AI) cannot authenticate.",
+     "resolution": "Add GEMINI_API_KEY=<your-key> to /Users/miniman/SACC/.env and restart the server.",
+     "example": "# .env\nGEMINI_API_KEY=AIza..."},
+    {"code": "CFG-002", "category": "config",     "title": "NAS volume not mounted",
+     "description": "The source folder path resolves to a local or non-existent directory. Expected /Volumes/Team Bank 12/SACC/.",
+     "resolution": "Open Finder → Connect to Server → smb://[NAS-IP]. Verify /Volumes/Team Bank 12/ appears before running the pipeline.",
+     "example": "ls \"/Volumes/Team Bank 12/SACC/\""},
+    {"code": "CFG-003", "category": "config",     "title": "VERTEX_PROJECT_ID not set (Vertex AI mode)",
+     "description": "VERTEX_PROJECT_ID is required to use Vertex AI instead of the direct Gemini API. When not set, falls back to genai.Client with GEMINI_API_KEY.",
+     "resolution": "Set VERTEX_PROJECT_ID=<your-gcp-project> in .env. Leave blank to use the Gemini API key instead.",
+     "example": None},
+    # System
+    {"code": "SYS-001", "category": "system",     "title": "ffprobe binary not found",
+     "description": "ffprobe is required for Stage 5 pre-flight (duration check) and Stage 3 metadata extraction (camera model, shoot date). Not found in PATH or repo root.",
+     "resolution": "The ffprobe binary ships with the repo at /Users/miniman/SACC/ffprobe. Verify it is executable: chmod +x /Users/miniman/SACC/ffprobe. Or install via: brew install ffmpeg.",
+     "example": "chmod +x /Users/miniman/SACC/ffprobe"},
+    {"code": "SYS-002", "category": "system",     "title": "Port 5174 already in use",
+     "description": "start_sacc.command detected a process already bound to port 5174. If the kill fails, the server will not start.",
+     "resolution": "Run: lsof -ti tcp:5174 | xargs kill -9. Then re-launch start_sacc.command.",
+     "example": "lsof -ti tcp:5174 | xargs kill -9"},
+    {"code": "SYS-003", "category": "system",     "title": "sacc_app.db locked (WAL timeout)",
+     "description": "SQLite WAL file lock timeout — usually caused by two server processes running simultaneously.",
+     "resolution": "Kill all uvicorn processes: pkill -f uvicorn. Then restart with start_sacc.command.",
+     "example": "pkill -f uvicorn && bash /Users/miniman/SACC/start_sacc.command"},
+    # Pipeline
+    {"code": "PIPE-001", "category": "pipeline",  "title": "Inbox folder not found",
+     "description": "The --inbox path passed to sacc_pipeline.py does not exist or is not mounted.",
+     "resolution": "Verify the NAS is mounted and the Inbox path matches. Default: /Volumes/Team Bank 12/SACC/Inbox/.",
+     "example": None},
+    {"code": "PIPE-002", "category": "pipeline",  "title": "Compressor returned non-zero exit",
+     "description": "Apple Compressor failed to generate a proxy for one or more files. Stage 7 (proxy wait) will time out.",
+     "resolution": "Open Compressor and check the job queue. Common causes: corrupt source file, unsupported codec, insufficient disk space in _proxy/ destination.",
+     "example": None},
+    {"code": "PIPE-003", "category": "pipeline",  "title": "Stage 8 proxy wait timeout",
+     "description": "Waited for the proxy file to appear but it never arrived within the timeout window. Stage 8 was skipped for this file.",
+     "resolution": "Check Compressor completed the job. Increase PROXY_WAIT_TIMEOUT in sacc_pipeline.py (default: 600s). Re-run Stage 6-7 for the affected file.",
+     "example": None},
+    # Validation
+    {"code": "VAL-001", "category": "validation", "title": "JSON stem mismatch",
+     "description": "A JSON file in json/ has a stem that does not match any video file in the parent folder. The relational key is broken.",
+     "resolution": "Run: python3 sacc_test.py inspect --folder <folder>. Identify the orphaned JSON. Either rename the video to match or delete the stale JSON.",
+     "example": "python3 sacc_test.py inspect --folder \"/Volumes/Team Bank 12/SACC/2024\""},
+    {"code": "VAL-002", "category": "validation", "title": "JSON parse error (malformed file)",
+     "description": "A JSON file in json/ is malformed and cannot be parsed. Stage 10 and DB sync skip this file.",
+     "resolution": "Open the JSON in a text editor. Common causes: truncated Gemini response, manual edit error. Delete and re-run Stage 8 for the source file if corrupted.",
+     "example": None},
+    {"code": "VAL-003", "category": "validation", "title": "Missing required JSON fields",
+     "description": "A JSON record is missing one or more required fields: model, sku, or loc_code. DB sync inserts with nulls.",
+     "resolution": "Run Stage 8 again for the affected file, or manually patch the JSON. Use sacc_test.py search to inspect records.",
+     "example": "python3 sacc_test.py search --folder <folder> --query \"SKU\""},
+    # Renamer
+    {"code": "RNM-001", "category": "renamer",    "title": "Unrecognised location code",
+     "description": "The location code entered in the Renamer or passed to --loc is not in the SACC location database (25 Florida retail locations).",
+     "resolution": "Use a valid SACC code. See Docs → Location Code Reference. Example valid codes: PDM, FLM, MAM, VLD, OFS.",
+     "example": "Valid codes: PDM FLM MAM OFS WOM VLD IDR LBV TPA HVP AVE DOL"},
+    {"code": "RNM-002", "category": "renamer",    "title": "Double SACC prefix detected",
+     "description": "A file already has a SACC location prefix and the renamer would produce a double-prefix (e.g. PDM-MALL_PDM-MALL_...).",
+     "resolution": "The renamer auto-strips existing SACC prefixes before applying a new one. If this still occurs, check the file's existing name for an unusual prefix pattern.",
+     "example": None},
+    {"code": "RNM-003", "category": "renamer",    "title": "ffprobe metadata extraction failed",
+     "description": "ffprobe could not read shoot date or camera model from the file. The renamer falls back to today's date and 'Cam' as the model token.",
+     "resolution": "The file may be corrupted or in an unsupported format. Verify with ffprobe directly. Rename manually if needed.",
+     "example": "ffprobe -v quiet -print_format json -show_streams \"IMG_3423.mov\""},
+    # Pre-flight
+    {"code": "PRE-001", "category": "preflight",  "title": "Clip below minimum duration (< 3 s)",
+     "description": "A video clip is shorter than the 3-second minimum required by Stage 5 pre-flight. The clip is excluded from compression and Stage 8.",
+     "resolution": "Expected for accidental short recordings. Remove the clip from Inbox if it should not be archived, or lower the duration threshold in sacc_pipeline.py.",
+     "example": None},
+    {"code": "PRE-002", "category": "preflight",  "title": "No motion detected",
+     "description": "Pre-flight motion analysis found fewer than 1 fps of motion. Likely a static shot or accidental black-frame recording.",
+     "resolution": "Review the clip. If valid footage, lower MOTION_THRESHOLD in sacc_pipeline.py. If accidental, delete from Inbox.",
+     "example": None},
+    {"code": "PRE-003", "category": "preflight",  "title": "Exact duplicate detected (checksum)",
+     "description": "Pre-flight checksum scan (size + 64 KB partial MD5) found an identical file already in the archive.",
+     "resolution": "Compare the two files in Finder. If truly identical, delete the copy from Inbox. Use the Dashboard Duplicate Scan panel to see all groups.",
+     "example": None},
+    # API
+    {"code": "API-001", "category": "api",        "title": "Gemini API 429 — rate limit exceeded",
+     "description": "The Gemini API returned HTTP 429 (Too Many Requests). Stage 8 uses exponential backoff (5 s → 10 s → 20 s) but may exhaust retries on large batches.",
+     "resolution": "Increase delay in _retry() in gemini_pipeline.py from 5 to 30 seconds and attempts from 3 to 5. Process in smaller batches (3–5 files) until quota resets.",
+     "example": "# gemini_pipeline.py\ndef _retry(fn, attempts=5, delay=30):"},
+    {"code": "API-002", "category": "api",        "title": "Gemini file upload stuck in PROCESSING",
+     "description": "The Gemini File API accepted the upload but the file never reached ACTIVE status within the polling timeout.",
+     "resolution": "The file auto-expires after 48 h. Re-run Stage 8. If recurring, reduce proxy file size by lowering the Compressor bitrate.",
+     "example": None},
+    {"code": "API-003", "category": "api",        "title": "/api/health not responding",
+     "description": "The FastAPI server is not reachable at http://localhost:5174/api/health.",
+     "resolution": "Check /tmp/sacc_api.log for startup errors. Common causes: another process on port 5174, missing Python dependency. Restart with start_sacc.command.",
+     "example": "cat /tmp/sacc_api.log"},
+]
+
+
+class ErrorLogBody(BaseModel):
+    code: str
+    message: str
+    context: str = ""
+
+
+@app.get("/api/errors")
+def get_errors():
+    """Return known error codes + runtime history."""
+    db = AppDB(_APP_DB_PATH)
+    return {
+        "known":   _KNOWN_ERRORS,
+        "history": db.get_error_history(limit=500),
+    }
+
+
+@app.post("/api/errors")
+def log_error(body: ErrorLogBody):
+    """Log a new runtime error event (called by pipeline / renamer / sacc_watcher)."""
+    db = AppDB(_APP_DB_PATH)
+    row = db.log_error(body.code, body.message, body.context)
+    return row
+
+
+@app.patch("/api/errors/{error_id}")
+def resolve_error(error_id: int):
+    """Mark a history event as resolved."""
+    db = AppDB(_APP_DB_PATH)
+    ok = db.mark_error_resolved(error_id)
+    if not ok:
+        raise HTTPException(404, f"Error event {error_id} not found")
+    return {"ok": True, "id": error_id}
+
+
+@app.delete("/api/errors/history")
+def clear_error_history():
+    """Delete all error history rows."""
+    db = AppDB(_APP_DB_PATH)
+    deleted = db.clear_error_history()
+    return {"ok": True, "deleted": deleted}
+
+
+# ── NAS media bridge — F+G prototype image serving ───────────────────────────
+
+@app.get("/nas/sneakers/{media_path:path}")
+def serve_nas_media(media_path: str):
+    """Serve images from NAS media store for F+G prototype."""
+    NAS_MEDIA_ROOT = Path("/Volumes/Team Bank 12/SACC/nas-media")
+    safe = (NAS_MEDIA_ROOT / media_path).resolve()
+    if not str(safe).startswith(str(NAS_MEDIA_ROOT.resolve())):
+        raise HTTPException(403, "Path traversal denied")
+    if not safe.is_file():
+        raise HTTPException(404, f"Media not found: {media_path}")
+    return FileResponse(str(safe))
+
+
+# ── F+G editorial data bridge ──────────────────────────────────────────────────
+
+@app.get("/api/fg/entries")
+def fg_entries(
+    db_path: str = Query(""),
+    limit: int = Query(50, le=200),
+    offset: int = Query(0),
+):
+    """
+    Map pipeline clips table → RSV editorial schema for fg-prototype.html.
+    Falls back to SCAA/sacc-data.json if no db_path provided or file not found.
+    """
+    if not db_path or not os.path.isfile(db_path):
+        static_path = os.path.join(os.path.dirname(__file__), "SCAA", "sacc-data.json")
+        if os.path.isfile(static_path):
+            with open(static_path) as f:
+                return json.load(f)
+        raise HTTPException(404, "No db_path provided and no static sacc-data.json fallback found")
+
+    if not _DB_OK:
+        raise HTTPException(500, "db.py not available")
+
+    sdb = _get_db(db_path)
+    rows = sdb.list_all(limit=limit, offset=offset)
+
+    def to_rsv(row, idx):
+        loc = row.get("loc_code") or "RSV"
+        code_str = str(idx + 1).zfill(3)
+        stem = row.get("stem", "")
+        shoot = row.get("shoot_date") or ""
+        return {
+            "id": stem,
+            "storeType": loc,
+            "code": code_str,
+            "name": row.get("model") or row.get("fcp_filename") or stem,
+            "subtitle": row.get("colorway") or "",
+            "brand": "",
+            "year": int(shoot[:4]) if shoot and len(shoot) >= 4 else 0,
+            "colorway": row.get("colorway") or "",
+            "material": "",
+            "designer": "",
+            "sku": row.get("sku") or "",
+            "retail": f"${row.get('price')}" if row.get("price") else "",
+            "tag": (row.get("model") or "").upper()[:24],
+            "isDark": idx % 2 == 0,
+            "images": {
+                "hero":         f"/api/video?path={row.get('folder_path', '')}&file={stem}.mov",
+                "threequarter": "",
+                "material":     "",
+                "sole":         "",
+                "detail":       "",
+            },
+            "sections": [
+                {
+                    "label": "LOCATION",
+                    "heading": row.get("loc_name") or loc,
+                    "body": row.get("loc_visual") or row.get("loc_audio") or "",
+                    "type": "story",
+                    "imageKey": "hero",
+                },
+                {"label": "ARCHIVE SPECS", "type": "specs", "imageKey": "sole"},
+            ],
+        }
+
+    entries = [to_rsv(r, i) for i, r in enumerate(rows)]
+    return {
+        "config": {
+            "title": "SACC Archive",
+            "baseImageUrl": "/nas/sneakers/",
+            "imageFormat": "webp",
+            "entriesPerPage": 12,
+        },
+        "entries": entries,
+    }
 
 
 # ── Static frontend — must be last so /api/* routes take precedence ───────────

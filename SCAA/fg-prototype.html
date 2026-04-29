@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SACC — F+G Archive Prototype</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+/* ── Reset + tokens ─────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --dark:   #0d0d0f;
+  --mid:    #161618;
+  --light:  #f5f3ef;
+  --ghost:  #eae7e0;
+  --ink:    #111113;
+  --chalk:  #f8f8f6;
+  --accent: #ff3c00;
+  --mono:   'Space Mono', 'Courier New', monospace;
+  --sans:   -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  --ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+html { font-family: var(--sans); scroll-behavior: smooth; }
+body { background: var(--dark); color: var(--chalk); overflow-x: hidden; }
+
+/* ── Views ──────────────────────────────────────────────────────────────── */
+.view { min-height: 100vh; width: 100%; }
+#view-grid { display: block; }
+#view-post { display: none; }
+
+/* ── Transition overlay ─────────────────────────────────────────────────── */
+#transition-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  pointer-events: none; opacity: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   F — CHECKERBOARD GRID HOMEPAGE
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.grid-nav {
+  position: sticky; top: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 28px;
+  background: rgba(13,13,15,0.94); backdrop-filter: blur(14px);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.grid-nav .wordmark {
+  font-family: var(--mono); font-size: 12px; letter-spacing: 0.14em;
+  color: var(--chalk); text-transform: uppercase;
+}
+.grid-nav .nav-right {
+  font-family: var(--mono); font-size: 10px; color: rgba(255,255,255,0.28);
+  letter-spacing: 0.06em;
+}
+
+/* Hero — first dark entry, full-width */
+.hero-tile {
+  position: relative; width: 100%; height: min(58vw, 560px); overflow: hidden;
+  cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.hero-tile .hero-bg {
+  position: absolute; inset: 0;
+  background: linear-gradient(135deg, #10101a 0%, #1c0c0c 50%, #0d0d0f 100%);
+  transition: transform 0.9s var(--ease-expo);
+}
+.hero-tile:hover .hero-bg { transform: scale(1.025); }
+.hero-tile .hero-img {
+  position: absolute; inset: 0;
+  background-size: cover; background-position: center; opacity: 0.35;
+  transition: transform 0.9s var(--ease-expo), opacity 0.4s;
+}
+.hero-tile:hover .hero-img { transform: scale(1.04); opacity: 0.5; }
+.hero-tile .hero-wm {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; pointer-events: none; user-select: none;
+  overflow: hidden;
+}
+.hero-tile .hero-wm span {
+  font-family: var(--mono); font-size: clamp(96px, 22vw, 260px);
+  font-weight: 700; letter-spacing: -0.05em; color: rgba(255,255,255,0.03);
+  white-space: nowrap; user-select: none;
+}
+.hero-tile .hero-content {
+  position: absolute; bottom: 0; left: 0; right: 0; padding: 28px 36px 32px;
+  background: linear-gradient(to top, rgba(0,0,0,0.88) 0%, transparent 100%);
+}
+.hero-tile .hero-tag {
+  display: inline-block; font-family: var(--mono); font-size: 8px;
+  letter-spacing: 0.16em; text-transform: uppercase;
+  border: 1px solid rgba(255,60,0,0.45); color: var(--accent);
+  padding: 3px 8px; border-radius: 2px; margin-bottom: 12px;
+}
+.hero-tile .hero-title {
+  font-size: clamp(24px, 4.5vw, 52px); font-weight: 800; line-height: 1.0;
+  letter-spacing: -0.02em; color: var(--chalk); margin-bottom: 6px;
+}
+.hero-tile .hero-sub {
+  font-family: var(--mono); font-size: 11px;
+  color: rgba(255,255,255,0.4); letter-spacing: 0.04em;
+}
+.hero-cta {
+  position: absolute; right: 36px; bottom: 32px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--chalk); cursor: pointer;
+  background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.14);
+  padding: 8px 18px; border-radius: 3px; transition: all 0.2s;
+}
+.hero-tile:hover .hero-cta {
+  background: var(--accent); border-color: var(--accent);
+}
+
+/* Checkerboard grid */
+.grid-section-label {
+  padding: 20px 28px 10px;
+  display: flex; align-items: baseline; gap: 10px;
+}
+.grid-section-label h2 {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.16em;
+  text-transform: uppercase; color: rgba(255,255,255,0.25);
+}
+.grid-section-label span {
+  font-family: var(--mono); font-size: 9px; color: rgba(255,255,255,0.15);
+}
+
+.tile-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr);
+}
+@media (min-width: 800px)  { .tile-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 1100px) { .tile-grid { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 1440px) { .tile-grid { grid-template-columns: repeat(5, 1fr); } }
+
+.tile {
+  position: relative; aspect-ratio: 3/4; overflow: hidden; cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.03);
+  transition: transform 0.4s var(--ease-expo);
+  will-change: transform;
+}
+.tile:hover { transform: scale(1.025); z-index: 2; }
+
+/* Checkerboard palette — dark / light / ghost cycling by position */
+.tile-dark  { background: var(--mid); }
+.tile-light { background: var(--light); }
+.tile-ghost { background: var(--ghost); }
+
+.tile .tile-img {
+  position: absolute; inset: 0;
+  background-size: cover; background-position: center;
+  transition: transform 0.65s var(--ease-expo), opacity 0.3s;
+}
+.tile-dark  .tile-img { opacity: 0.45; }
+.tile-light .tile-img,
+.tile-ghost .tile-img { opacity: 0.42; }
+.tile:hover .tile-img { transform: scale(1.07); }
+.tile-dark:hover  .tile-img { opacity: 0.65; }
+.tile-light:hover .tile-img,
+.tile-ghost:hover .tile-img { opacity: 0.6; }
+
+.tile .tile-overlay {
+  position: absolute; inset: 0;
+  background: linear-gradient(to top, rgba(0,0,0,0.7) 0%, transparent 55%);
+}
+.tile-light .tile-overlay,
+.tile-ghost .tile-overlay {
+  background: linear-gradient(to top, rgba(240,237,230,0.88) 0%, transparent 55%);
+}
+
+.tile .tile-badge {
+  position: absolute; top: 12px; left: 12px;
+  font-family: var(--mono); font-size: 8px; letter-spacing: 0.1em;
+  text-transform: uppercase; padding: 3px 6px; border-radius: 2px;
+}
+.tile-dark  .tile-badge { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.3); }
+.tile-light .tile-badge,
+.tile-ghost .tile-badge { background: rgba(0,0,0,0.06); color: rgba(0,0,0,0.3); }
+
+.tile .tile-body { position: absolute; bottom: 0; left: 0; right: 0; padding: 14px 16px; }
+.tile .tile-code {
+  font-family: var(--mono); font-size: 8px; letter-spacing: 0.08em;
+  text-transform: uppercase; margin-bottom: 4px;
+}
+.tile-dark  .tile-code { color: rgba(255,255,255,0.35); }
+.tile-light .tile-code,
+.tile-ghost .tile-code { color: rgba(0,0,0,0.35); }
+.tile .tile-name { font-size: 13px; font-weight: 700; line-height: 1.2; margin-bottom: 3px; }
+.tile-dark  .tile-name { color: var(--chalk); }
+.tile-light .tile-name,
+.tile-ghost .tile-name { color: var(--ink); }
+.tile .tile-sub {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.03em;
+}
+.tile-dark  .tile-sub { color: rgba(255,255,255,0.28); }
+.tile-light .tile-sub,
+.tile-ghost .tile-sub { color: rgba(0,0,0,0.32); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   G — STORY SCROLL POST PAGE
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Post colour modes */
+.post-view.mode-dark  { --bg: var(--dark); --bg2: var(--mid); --fg: var(--chalk); --fg2: rgba(255,255,255,0.5); --border: rgba(255,255,255,0.07); --nav-bg: rgba(13,13,15,0.93); }
+.post-view.mode-light { --bg: var(--light); --bg2: var(--ghost); --fg: var(--ink); --fg2: rgba(0,0,0,0.45); --border: rgba(0,0,0,0.1); --nav-bg: rgba(245,243,239,0.96); }
+
+.post-view {
+  background: var(--bg); color: var(--fg);
+  min-height: 100vh;
+}
+
+.post-nav {
+  position: sticky; top: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 13px 28px;
+  background: var(--nav-bg); backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--border);
+}
+.post-nav .back { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em;
+  text-transform: uppercase; cursor: pointer; color: var(--fg); transition: opacity 0.2s; }
+.post-nav .back:hover { opacity: 0.5; }
+.post-nav .nav-title {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--fg); opacity: 0;
+  transition: opacity 0.3s; pointer-events: none;
+}
+.post-nav .nav-sku { font-family: var(--mono); font-size: 10px; color: var(--fg2); letter-spacing: 0.04em; }
+
+/* Post hero */
+.post-hero {
+  position: relative; height: 100vh; overflow: hidden;
+  display: flex; flex-direction: column; justify-content: flex-end;
+}
+.post-hero-bg {
+  position: absolute; inset: 0;
+  background-size: cover; background-position: center;
+  transition: transform 12s linear;
+}
+.post-hero-bg.bg-gradient { background-size: auto; }
+.post-hero-wm {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; pointer-events: none; overflow: hidden;
+}
+.post-hero-wm span {
+  font-family: var(--mono); font-size: clamp(120px, 26vw, 320px);
+  font-weight: 700; letter-spacing: -0.06em; white-space: nowrap;
+  user-select: none;
+}
+.mode-dark  .post-hero-wm span { color: rgba(255,255,255,0.03); }
+.mode-light .post-hero-wm span { color: rgba(0,0,0,0.04); }
+.post-hero-scrim {
+  position: absolute; inset: 0;
+  background: linear-gradient(to top, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.1) 60%, transparent 100%);
+}
+.mode-light .post-hero-scrim {
+  background: linear-gradient(to top, rgba(240,237,230,0.9) 0%, rgba(240,237,230,0.1) 65%, transparent 100%);
+}
+.post-hero-content {
+  position: relative; z-index: 2; padding: 0 36px 44px;
+}
+.post-hero-eyebrow { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.post-hero-tag {
+  font-family: var(--mono); font-size: 8px; letter-spacing: 0.16em;
+  text-transform: uppercase; padding: 4px 9px; border-radius: 2px;
+}
+.mode-dark  .post-hero-tag { background: rgba(255,60,0,0.14); color: var(--accent); border: 1px solid rgba(255,60,0,0.3); }
+.mode-light .post-hero-tag { background: rgba(0,0,0,0.07); color: rgba(0,0,0,0.55); border: 1px solid rgba(0,0,0,0.14); }
+.post-hero-eyebrow .post-designer {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em;
+}
+.mode-dark  .post-hero-eyebrow .post-designer { color: rgba(255,255,255,0.38); }
+.mode-light .post-hero-eyebrow .post-designer { color: rgba(0,0,0,0.38); }
+.post-hero-title {
+  font-size: clamp(30px, 5.5vw, 68px); font-weight: 800; line-height: 0.98;
+  letter-spacing: -0.025em; margin-bottom: 8px; color: var(--fg);
+}
+.post-hero-subtitle { font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; color: var(--fg2); }
+
+/* Spec strip */
+.spec-strip {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+}
+.spec-cell { padding: 16px 20px; border-right: 1px solid var(--border); }
+.spec-cell:last-child { border-right: none; }
+.spec-label {
+  font-family: var(--mono); font-size: 8px; letter-spacing: 0.14em;
+  text-transform: uppercase; margin-bottom: 6px; color: var(--fg2);
+}
+.spec-value { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; color: var(--fg); }
+.spec-unit { font-family: var(--mono); font-size: 9px; margin-top: 2px; color: var(--fg2); }
+
+/* Story sections — alternating layout */
+.story-section {
+  display: grid; grid-template-columns: 1fr 1fr; min-height: 55vh;
+  will-change: opacity, transform;
+}
+.story-section.flip { direction: rtl; }
+.story-section.flip > * { direction: ltr; }
+
+.section-media { position: relative; overflow: hidden; min-height: 340px; }
+.section-media .media-fill {
+  position: absolute; inset: 0;
+  background-size: cover; background-position: center;
+  transition: transform 0.7s var(--ease-expo);
+}
+.story-section:hover .media-fill { transform: scale(1.04); }
+.section-media-label {
+  position: absolute; bottom: 14px; left: 14px;
+  font-family: var(--mono); font-size: 8px; letter-spacing: 0.1em;
+  text-transform: uppercase; padding: 3px 7px; border-radius: 2px;
+  background: rgba(0,0,0,0.45); color: rgba(255,255,255,0.45);
+}
+
+.section-text {
+  padding: 48px 40px; display: flex; flex-direction: column;
+  justify-content: center; gap: 14px; background: var(--bg);
+}
+.section-text.alt-bg { background: var(--bg2); }
+.section-step {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--fg2);
+}
+.section-label-tag {
+  font-family: var(--mono); font-size: 8px; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--accent);
+}
+.section-heading {
+  font-size: clamp(19px, 2.4vw, 30px); font-weight: 700;
+  line-height: 1.2; letter-spacing: -0.01em; color: var(--fg);
+}
+.section-body {
+  font-size: 14px; line-height: 1.8; color: var(--fg2); max-width: 400px;
+}
+
+/* Specs section (type: "specs") */
+.specs-section {
+  display: grid; grid-template-columns: 1fr 1fr; min-height: 40vh;
+}
+.specs-section .specs-media { position: relative; overflow: hidden; }
+.specs-section .specs-media .media-fill {
+  position: absolute; inset: 0;
+  background-size: cover; background-position: center;
+}
+.specs-section .specs-table {
+  padding: 40px; display: flex; flex-direction: column;
+  justify-content: center; gap: 0; background: var(--bg2);
+}
+.specs-section-title {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--fg2); margin-bottom: 20px;
+}
+.spec-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 9px 0; border-bottom: 1px solid var(--border);
+}
+.spec-row:last-child { border-bottom: none; }
+.spec-row-key {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--fg2); flex: 0 0 120px;
+}
+.spec-row-val { font-size: 13px; font-weight: 600; color: var(--fg); text-align: right; }
+
+/* Next entry */
+.next-entry {
+  padding: 56px 36px 72px; border-top: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 18px; background: var(--bg);
+}
+.next-entry .next-label {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--fg2);
+}
+.next-entry .next-preview { font-size: clamp(18px, 2.8vw, 34px); font-weight: 700; color: var(--fg); }
+.next-entry .next-sub { font-family: var(--mono); font-size: 10px; color: var(--fg2); margin-top: -8px; }
+.next-btn {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
+  text-transform: uppercase; cursor: pointer;
+  padding: 11px 22px; border-radius: 3px; border: none; outline: none;
+  transition: all 0.22s; width: fit-content; margin-top: 4px;
+}
+.mode-dark  .next-btn { background: var(--accent); color: white; }
+.mode-dark  .next-btn:hover { background: #ff5520; }
+.mode-light .next-btn { background: var(--ink); color: var(--chalk); }
+.mode-light .next-btn:hover { background: #333; }
+.next-btn .arr { transition: transform 0.18s var(--ease-expo); }
+.next-btn:hover .arr { transform: translateX(5px); }
+</style>
+</head>
+<body>
+
+<div id="transition-overlay"></div>
+
+<!-- ══ F — GRID ═══════════════════════════════════════════════════════════ -->
+<div id="view-grid" class="view">
+  <nav class="grid-nav">
+    <div class="wordmark">SACC ◈ Archive</div>
+    <div class="nav-right" id="grid-count">—</div>
+  </nav>
+  <div class="hero-tile" id="hero-tile">
+    <div class="hero-bg" id="hero-bg"></div>
+    <div class="hero-img" id="hero-img"></div>
+    <div class="hero-wm"><span id="hero-wm-text"></span></div>
+    <div class="hero-content">
+      <div class="hero-tag" id="hero-tag"></div>
+      <div class="hero-title" id="hero-title"></div>
+      <div class="hero-sub" id="hero-sub"></div>
+    </div>
+    <div class="hero-cta" id="hero-cta">View Entry →</div>
+  </div>
+  <div class="grid-section-label">
+    <h2>Archive</h2>
+    <span id="archive-count"></span>
+  </div>
+  <div class="tile-grid" id="tile-grid"></div>
+</div>
+
+<!-- ══ G — POST ═══════════════════════════════════════════════════════════ -->
+<div id="view-post" class="view">
+  <div id="post-nav-slot"></div>
+  <div class="post-hero" id="post-hero">
+    <div class="post-hero-bg bg-gradient" id="post-hero-bg"></div>
+    <div class="post-hero-wm"><span id="post-wm"></span></div>
+    <div class="post-hero-scrim"></div>
+    <div class="post-hero-content">
+      <div class="post-hero-eyebrow">
+        <span class="post-hero-tag" id="post-tag"></span>
+        <span class="post-designer" id="post-designer"></span>
+      </div>
+      <div class="post-hero-title" id="post-title"></div>
+      <div class="post-hero-subtitle" id="post-subtitle"></div>
+    </div>
+  </div>
+  <div class="spec-strip" id="spec-strip">
+    <div class="spec-cell"><div class="spec-label">SKU</div><div class="spec-value" id="sp-sku"></div><div class="spec-unit">Style code</div></div>
+    <div class="spec-cell"><div class="spec-label">Retail</div><div class="spec-value" id="sp-retail"></div><div class="spec-unit">Original MSRP</div></div>
+    <div class="spec-cell"><div class="spec-label">Year</div><div class="spec-value" id="sp-year"></div><div class="spec-unit">Release</div></div>
+    <div class="spec-cell"><div class="spec-label">Material</div><div class="spec-value" id="sp-material"></div><div class="spec-unit">Upper</div></div>
+  </div>
+  <div id="story-sections-slot"></div>
+  <div class="next-entry" id="next-entry">
+    <div class="next-label">Next Entry</div>
+    <div class="next-preview" id="next-preview"></div>
+    <div class="next-sub" id="next-sub"></div>
+    <button class="next-btn" id="next-btn">Continue <span class="arr">→</span></button>
+  </div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+let DATA   = null;
+let curIdx = 0;
+
+// ── Checkerboard palette cycle ────────────────────────────────────────────────
+// Pattern: dark, light, ghost, ghost, light, dark (repeating) — driven by isDark + position
+function tileClass(entry, idx) {
+  if (entry.isDark) return 'tile-dark';
+  return idx % 3 === 0 ? 'tile-light' : 'tile-ghost';
+}
+
+function heroGrad(isDark) {
+  return isDark
+    ? 'linear-gradient(145deg,#0d0d1a 0%,#1c0c0a 50%,#0d0d0f 100%)'
+    : 'linear-gradient(145deg,#ddd8ce 0%,#ccc7ba 50%,#d4cfc4 100%)';
+}
+
+function imgUrl(entry, key) {
+  if (!DATA) return '';
+  const base = DATA.config.baseImageUrl;
+  const path = entry.images?.[key];
+  if (!path) return '';
+  // Served via FastAPI: GET /nas/sneakers/<path>
+  return base + path;
+}
+
+function postMode(entry) { return entry.isDark ? 'mode-dark' : 'mode-light'; }
+
+// ── Load data ─────────────────────────────────────────────────────────────────
+async function boot() {
+  try {
+    const r = await fetch('./sacc-data.json');
+    DATA = await r.json();
+  } catch (_) {
+    // Hard-coded minimal fallback so the prototype works from file://
+    DATA = {
+      config: { title:'SACC Archive', baseImageUrl:'/nas/sneakers/', imageFormat:'webp', entriesPerPage:12 },
+      entries: [
+        { id:'RSV-001_', storeType:'RSV', code:'001', name:'Air Max 95', subtitle:'Original', brand:'Nike', year:1995, colorway:'Neutral Grey', material:'Mesh / N.P.R.', designer:'Sergio Lozano', sku:'609048-059', retail:'$110', tag:'THE SILHOUETTE', isDark:true, images:{}, sections:[{label:'THE SILHOUETTE',heading:'Inspired by human anatomy.',body:'Gradient layers that mirror the body\'s muscle groups — from toe to heel.',type:'story',imageKey:'threequarter'},{label:'MATERIAL',heading:'Mesh meets N.P.R. foam.',body:'Visible Air cushioning at the heel.',type:'material',imageKey:'material'},{label:'ARCHIVE SPECS',type:'specs',imageKey:'sole'}] },
+        { id:'RSV-002_', storeType:'RSV', code:'002', name:'Jordan 1', subtitle:'Bred', brand:'Jordan', year:1985, colorway:'Black / Red', material:'Leather', designer:'Peter Moore', sku:'130207-001', retail:'$65', tag:'THE REBELLION', isDark:false, images:{}, sections:[{label:'THE REBELLION',heading:'Banned. Fined. Worn anyway.',body:'Nike paid the $5,000 fine every game.',type:'story',imageKey:'threequarter'},{label:'CONSTRUCTION',heading:'Full-grain leather. High ankle.',body:'The perforated toe box, the strap, the Wings logo — each detail deliberate.',type:'material',imageKey:'material'},{label:'ARCHIVE SPECS',type:'specs',imageKey:'sole'}] },
+        { id:'RSV-003_', storeType:'RSV', code:'003', name:'Dunk Low', subtitle:'Pro B', brand:'Nike', year:1985, colorway:'College Navy', material:'Leather / Suede', designer:'Peter Moore', sku:'BQ6817-102', retail:'$80', tag:'THE CANVAS', isDark:true, images:{}, sections:[{label:'THE CANVAS',heading:'Born on the court. Claimed by the street.',body:'The simplicity was the point.',type:'story',imageKey:'threequarter'},{label:'MATERIAL',heading:'Leather over suede. Always.',body:'The two-tone construction created a visual language that outlasted every trend.',type:'material',imageKey:'material'},{label:'ARCHIVE SPECS',type:'specs',imageKey:'sole'}] },
+        { id:'RSV-004_', storeType:'RSV', code:'004', name:'Samba OG', subtitle:'Classic', brand:'Adidas', year:1950, colorway:'Core Black / White', material:'Leather / Gum', designer:'Adidas Archive', sku:'B75807', retail:'$90', tag:'THE ORIGINAL', isDark:false, images:{}, sections:[{label:'THE ORIGINAL',heading:'70 years and no apology.',body:'Built for frozen pitches in post-war Germany.',type:'story',imageKey:'threequarter'},{label:'CONSTRUCTION',heading:'T-toe reinforcement. Gum sole.',body:'Unaltered since 1950.',type:'material',imageKey:'material'},{label:'ARCHIVE SPECS',type:'specs',imageKey:'sole'}] },
+        { id:'RSV-005_', storeType:'RSV', code:'005', name:'Gel-Lyte III', subtitle:'OG', brand:'Asics', year:1990, colorway:'White / Grey', material:'Mesh / Leather', designer:'Shigeyuki Mori', sku:'H63K0-0101', retail:'$85', tag:'THE SPLIT TONGUE', isDark:true, images:{}, sections:[{label:'THE SPLIT TONGUE',heading:'One problem. One solution.',body:'Runners complained of tongue slip. Shigeyuki Mori split it.',type:'story',imageKey:'threequarter'},{label:'GEL TECHNOLOGY',heading:'Silicone gel in the midsole.',body:'A polymer that absorbed impact across multiple planes.',type:'material',imageKey:'material'},{label:'ARCHIVE SPECS',type:'specs',imageKey:'sole'}] },
+        { id:'RSV-006_', storeType:'RSV', code:'006', name:'Air Force 1', subtitle:"Low '82", brand:'Nike', year:1982, colorway:'White / White', material:'Leather', designer:'Bruce Kilgore', sku:'CW2288-111', retail:'$90', tag:'THE FIRST', isDark:false, images:{}, sections:[{label:'THE FIRST',heading:'First basketball shoe with Nike Air.',body:'Retired in 1984. Brought back in 1986 by demand — from Baltimore.',type:'story',imageKey:'threequarter'},{label:'CONSTRUCTION',heading:'Perforated leather. Air unit.',body:'A construction so right it\'s been unchanged for 40 years.',type:'material',imageKey:'material'},{label:'ARCHIVE SPECS',type:'specs',imageKey:'sole'}] },
+      ]
+    };
+  }
+  buildGrid();
+}
+
+// ── F: Build grid ─────────────────────────────────────────────────────────────
+function buildGrid() {
+  const entries = DATA.entries;
+  document.getElementById('grid-count').textContent = `${entries.length} entries`;
+
+  // Hero (entry 0 — always the first)
+  const h = entries[0];
+  document.getElementById('hero-bg').style.background = heroGrad(h.isDark);
+  const hi = imgUrl(h, 'hero');
+  if (hi) document.getElementById('hero-img').style.backgroundImage = `url('${hi}')`;
+  document.getElementById('hero-wm-text').textContent = h.brand.toUpperCase();
+  document.getElementById('hero-tag').textContent = h.tag;
+  document.getElementById('hero-title').textContent = h.name;
+  document.getElementById('hero-sub').textContent = `${h.subtitle} · ${h.colorway} · ${h.brand}`;
+  document.getElementById('hero-tile').addEventListener('click', () => openPost(0));
+  document.getElementById('hero-cta').addEventListener('click', e => { e.stopPropagation(); openPost(0); });
+
+  // Archive grid (remaining entries)
+  const rest = entries.slice(1);
+  document.getElementById('archive-count').textContent = `${rest.length} clips`;
+  const grid = document.getElementById('tile-grid');
+  grid.innerHTML = '';
+
+  rest.forEach((entry, i) => {
+    const origIdx = i + 1;
+    const cls = tileClass(entry, i);
+    const t = document.createElement('div');
+    t.className = `tile ${cls}`;
+    const bg = imgUrl(entry, 'hero');
+    t.innerHTML = `
+      <div class="tile-img" ${bg ? `style="background-image:url('${bg}')"` : ''}></div>
+      <div class="tile-overlay"></div>
+      <div class="tile-badge">${entry.storeType}-${entry.code}</div>
+      <div class="tile-body">
+        <div class="tile-code">${entry.brand} · ${entry.year}</div>
+        <div class="tile-name">${entry.name}</div>
+        <div class="tile-sub">${entry.subtitle}</div>
+      </div>`;
+    t.addEventListener('click', () => openPost(origIdx));
+
+    // Stagger entrance
+    gsap.set(t, { opacity: 0, y: 20 });
+    new IntersectionObserver(([ev]) => {
+      if (ev.isIntersecting) {
+        gsap.to(t, { opacity: 1, y: 0, duration: 0.55, ease: 'expo.out', delay: (i % 5) * 0.055 });
+        ev.target._io?.disconnect();
+      }
+    }, { threshold: 0.04 }).observe(t);
+
+    grid.appendChild(t);
+  });
+}
+
+// ── Color-state transition → post ─────────────────────────────────────────────
+function openPost(idx) {
+  curIdx = idx;
+  const entry = DATA.entries[idx];
+  const ov = document.getElementById('transition-overlay');
+  ov.style.background = entry.isDark ? '#0d0d0f' : '#eae7e0';
+  gsap.to(ov, {
+    opacity: 1, duration: 0.3, ease: 'power2.in',
+    onComplete() {
+      renderPost(entry, idx);
+      document.getElementById('view-grid').style.display = 'none';
+      document.getElementById('view-post').style.display = 'block';
+      window.scrollTo(0, 0);
+      gsap.to(ov, { opacity: 0, duration: 0.5, ease: 'power2.out' });
+      animatePostEntrance();
+      wirePostScroll();
+    }
+  });
+}
+
+// ── G: Render post ────────────────────────────────────────────────────────────
+function renderPost(entry, idx) {
+  const mode = postMode(entry);
+  const post = document.getElementById('view-post');
+  post.className = `view post-view ${mode}`;
+
+  // Nav
+  document.getElementById('post-nav-slot').innerHTML = `
+    <nav class="post-nav">
+      <div class="back" id="back-btn">← Archive</div>
+      <div class="nav-title" id="nav-title">${entry.name}</div>
+      <div class="nav-sku">${entry.sku}</div>
+    </nav>`;
+  document.getElementById('back-btn').addEventListener('click', goBack);
+
+  // Hero
+  const heroEl = document.getElementById('post-hero-bg');
+  const heroImg = imgUrl(entry, 'hero');
+  if (heroImg) {
+    heroEl.classList.remove('bg-gradient');
+    heroEl.style.background = '';
+    heroEl.style.backgroundImage = `url('${heroImg}')`;
+  } else {
+    heroEl.classList.add('bg-gradient');
+    heroEl.style.backgroundImage = '';
+    heroEl.style.background = heroGrad(entry.isDark);
+  }
+  document.getElementById('post-wm').textContent  = entry.brand.toUpperCase();
+  document.getElementById('post-tag').textContent = entry.tag;
+  document.getElementById('post-designer').textContent = entry.designer ? `Design: ${entry.designer}` : '';
+  document.getElementById('post-title').textContent    = entry.name;
+  document.getElementById('post-subtitle').textContent = `${entry.subtitle} · ${entry.colorway}`;
+
+  // Spec strip
+  document.getElementById('sp-sku').textContent    = entry.sku;
+  document.getElementById('sp-retail').textContent = entry.retail;
+  document.getElementById('sp-year').textContent   = entry.year;
+  document.getElementById('sp-material').textContent = entry.material;
+
+  // Story sections
+  const slot = document.getElementById('story-sections-slot');
+  slot.innerHTML = '';
+  (entry.sections || []).forEach((sec, i) => {
+    if (sec.type === 'specs') {
+      // Specs section — table layout
+      const el = document.createElement('div');
+      el.className = 'specs-section story-section';
+      el.style.cssText = 'opacity:0;transform:translateY(28px)';
+      const imgSrc = imgUrl(entry, sec.imageKey || 'sole');
+      el.innerHTML = `
+        <div class="specs-media">
+          <div class="media-fill" ${imgSrc ? `style="background-image:url('${imgSrc}')"` : `style="background:${entry.isDark?'#1a1a1a':'#ccc7bb'}"`}></div>
+        </div>
+        <div class="specs-table">
+          <div class="specs-section-title">Archive Specs</div>
+          ${[
+            ['Brand',    entry.brand],
+            ['Model',    entry.name],
+            ['Subtitle', entry.subtitle],
+            ['Colorway', entry.colorway],
+            ['Material', entry.material],
+            ['SKU',      entry.sku],
+            ['Year',     entry.year],
+            ['Retail',   entry.retail],
+            ['Designer', entry.designer],
+            ['ID',       entry.id],
+          ].map(([k,v]) => v ? `<div class="spec-row"><div class="spec-row-key">${k}</div><div class="spec-row-val">${v}</div></div>` : '').join('')}
+        </div>`;
+      slot.appendChild(el);
+      return;
+    }
+
+    // Story / material sections
+    const flip = i % 2 !== 0;
+    const imgSrc = imgUrl(entry, sec.imageKey || 'hero');
+    const el = document.createElement('div');
+    el.className = `story-section${flip ? ' flip' : ''}`;
+    el.style.cssText = 'opacity:0;transform:translateY(28px)';
+    el.innerHTML = `
+      <div class="section-media">
+        <div class="media-fill" ${imgSrc ? `style="background-image:url('${imgSrc}')"` : `style="background:${entry.isDark?'#1a1a1a':'#ccc7bb'}"`}></div>
+        <div class="section-media-label">${sec.label}</div>
+      </div>
+      <div class="section-text${i % 2 !== 0 ? ' alt-bg' : ''}">
+        <div class="section-step">0${i+1}</div>
+        <div class="section-label-tag">${sec.label}</div>
+        <div class="section-heading">${sec.heading || ''}</div>
+        <div class="section-body">${sec.body || ''}</div>
+      </div>`;
+    slot.appendChild(el);
+  });
+
+  // Next entry CTA
+  const nextIdx = (idx + 1) % DATA.entries.length;
+  const next = DATA.entries[nextIdx];
+  document.getElementById('next-preview').textContent = next.name;
+  document.getElementById('next-sub').textContent = `${next.subtitle} · ${next.brand} · ${next.year}`;
+  document.getElementById('next-btn').onclick = () => openPost(nextIdx);
+}
+
+// ── Post entrance animation ───────────────────────────────────────────────────
+function animatePostEntrance() {
+  gsap.from('.post-hero-title',   { y: 32, opacity: 0, duration: 0.85, ease: 'expo.out', delay: 0.1 });
+  gsap.from('.post-hero-eyebrow', { y: 20, opacity: 0, duration: 0.65, ease: 'expo.out' });
+  gsap.from('.post-hero-subtitle',{ y: 20, opacity: 0, duration: 0.65, ease: 'expo.out', delay: 0.14 });
+  gsap.from('#spec-strip',        { y: 22, opacity: 0, duration: 0.55, ease: 'expo.out', delay: 0.22 });
+}
+
+// ── ScrollTrigger section reveals ────────────────────────────────────────────
+function wirePostScroll() {
+  gsap.registerPlugin(ScrollTrigger);
+  // Kill any previous triggers
+  ScrollTrigger.getAll().forEach(t => t.kill());
+
+  // Nav title fade on scroll
+  ScrollTrigger.create({
+    trigger: '.post-hero', start: 'bottom 60%',
+    onEnter:  () => { const n = document.getElementById('nav-title'); if (n) n.style.opacity = '1'; },
+    onLeaveBack: () => { const n = document.getElementById('nav-title'); if (n) n.style.opacity = '0'; },
+  });
+
+  // Story sections stagger reveal
+  document.querySelectorAll('.story-section, .specs-section').forEach((el, i) => {
+    ScrollTrigger.create({
+      trigger: el, start: 'top 88%', once: true,
+      onEnter() {
+        gsap.to(el, { opacity: 1, y: 0, duration: 0.75, ease: 'expo.out', delay: i * 0.04 });
+      }
+    });
+  });
+
+  // Next entry reveal
+  ScrollTrigger.create({
+    trigger: '#next-entry', start: 'top 90%', once: true,
+    onEnter() { gsap.from('#next-entry', { opacity: 0, y: 20, duration: 0.6, ease: 'expo.out' }); }
+  });
+
+  // Parallax hero
+  gsap.to('#post-hero-bg', {
+    y: '20%', ease: 'none',
+    scrollTrigger: { trigger: '.post-hero', start: 'top top', end: 'bottom top', scrub: 1.2 }
+  });
+}
+
+// ── Back to grid ──────────────────────────────────────────────────────────────
+function goBack() {
+  const entry = DATA.entries[curIdx];
+  const ov = document.getElementById('transition-overlay');
+  ov.style.background = entry.isDark ? '#0d0d0f' : '#eae7e0';
+  ScrollTrigger.getAll().forEach(t => t.kill());
+  gsap.to(ov, {
+    opacity: 1, duration: 0.28, ease: 'power2.in',
+    onComplete() {
+      document.getElementById('view-post').style.display = 'none';
+      document.getElementById('view-grid').style.display = 'block';
+      window.scrollTo(0, 0);
+      gsap.to(ov, { opacity: 0, duration: 0.5, ease: 'power2.out' });
+    }
+  });
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+gsap.registerPlugin(ScrollTrigger);
+boot();
+</script>
+</body>
+</html>

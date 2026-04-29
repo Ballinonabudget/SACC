@@ -1,0 +1,274 @@
+{
+  "config": {
+    "title": "SACC Archive",
+    "baseImageUrl": "/nas/sneakers/",
+    "imageFormat": "webp",
+    "entriesPerPage": 12
+  },
+  "entries": [
+    {
+      "id": "RSV-001_",
+      "storeType": "RSV",
+      "code": "001",
+      "name": "Air Max 95",
+      "subtitle": "Original",
+      "brand": "Nike",
+      "year": 1995,
+      "colorway": "Neutral Grey",
+      "material": "Mesh / N.P.R.",
+      "designer": "Sergio Lozano",
+      "sku": "609048-059",
+      "retail": "$110",
+      "tag": "THE SILHOUETTE",
+      "isDark": true,
+      "images": {
+        "hero": "RSV-001_/hero.webp",
+        "threequarter": "RSV-001_/3q.webp",
+        "material": "RSV-001_/material.webp",
+        "sole": "RSV-001_/sole.webp",
+        "detail": "RSV-001_/detail.webp"
+      },
+      "sections": [
+        {
+          "label": "THE SILHOUETTE",
+          "heading": "Inspired by human anatomy.",
+          "body": "Gradient layers that mirror the body's muscle groups — from toe to heel. A running shoe that reads like a topographic map of motion.",
+          "type": "story",
+          "imageKey": "threequarter"
+        },
+        {
+          "label": "MATERIAL",
+          "heading": "Mesh meets N.P.R. foam.",
+          "body": "Visible Air cushioning at the heel. A layered mesh upper with neoprene-like panels. Every material chosen for a specific zone of the foot.",
+          "type": "material",
+          "imageKey": "material"
+        },
+        {
+          "label": "ARCHIVE SPECS",
+          "type": "specs",
+          "imageKey": "sole"
+        }
+      ]
+    },
+    {
+      "id": "RSV-002_",
+      "storeType": "RSV",
+      "code": "002",
+      "name": "Jordan 1",
+      "subtitle": "Bred",
+      "brand": "Jordan",
+      "year": 1985,
+      "colorway": "Black / Red",
+      "material": "Leather",
+      "designer": "Peter Moore",
+      "sku": "130207-001",
+      "retail": "$65",
+      "tag": "THE REBELLION",
+      "isDark": false,
+      "images": {
+        "hero": "RSV-002_/hero.webp",
+        "threequarter": "RSV-002_/3q.webp",
+        "material": "RSV-002_/material.webp",
+        "sole": "RSV-002_/sole.webp",
+        "detail": "RSV-002_/detail.webp"
+      },
+      "sections": [
+        {
+          "label": "THE REBELLION",
+          "heading": "Banned. Fined. Worn anyway.",
+          "body": "Nike paid the $5,000 fine every game. The shoe that built an empire on a technicality — a colorway that didn't comply with the NBA uniform rule.",
+          "type": "story",
+          "imageKey": "threequarter"
+        },
+        {
+          "label": "CONSTRUCTION",
+          "heading": "Full-grain leather. High ankle.",
+          "body": "The high-top silhouette was a statement of protection. The perforated toe box, the strap, the Wings logo — each detail deliberate.",
+          "type": "material",
+          "imageKey": "material"
+        },
+        {
+          "label": "ARCHIVE SPECS",
+          "type": "specs",
+          "imageKey": "sole"
+        }
+      ]
+    },
+    {
+      "id": "RSV-003_",
+      "storeType": "RSV",
+      "code": "003",
+      "name": "Dunk Low",
+      "subtitle": "Pro B",
+      "brand": "Nike",
+      "year": 1985,
+      "colorway": "College Navy",
+      "material": "Leather / Suede",
+      "designer": "Peter Moore",
+      "sku": "BQ6817-102",
+      "retail": "$80",
+      "tag": "THE CANVAS",
+      "isDark": true,
+      "images": {
+        "hero": "RSV-003_/hero.webp",
+        "threequarter": "RSV-003_/3q.webp",
+        "material": "RSV-003_/material.webp",
+        "sole": "RSV-003_/sole.webp",
+        "detail": "RSV-003_/detail.webp"
+      },
+      "sections": [
+        {
+          "label": "THE CANVAS",
+          "heading": "Born on the court. Claimed by the street.",
+          "body": "Originally a performance basketball shoe, the Dunk became a blank canvas for subcultures — skate, hip-hop, collectors. The simplicity was the point.",
+          "type": "story",
+          "imageKey": "threequarter"
+        },
+        {
+          "label": "MATERIAL",
+          "heading": "Leather over suede. Always.",
+          "body": "The two-tone construction — a smooth leather base with suede overlays — created a visual language that outlasted every trend it inspired.",
+          "type": "material",
+          "imageKey": "material"
+        },
+        {
+          "label": "ARCHIVE SPECS",
+          "type": "specs",
+          "imageKey": "sole"
+        }
+      ]
+    },
+    {
+      "id": "RSV-004_",
+      "storeType": "RSV",
+      "code": "004",
+      "name": "Samba OG",
+      "subtitle": "Classic",
+      "brand": "Adidas",
+      "year": 1950,
+      "colorway": "Core Black / White",
+      "material": "Leather / Gum",
+      "designer": "Adidas Archive",
+      "sku": "B75807",
+      "retail": "$90",
+      "tag": "THE ORIGINAL",
+      "isDark": false,
+      "images": {
+        "hero": "RSV-004_/hero.webp",
+        "threequarter": "RSV-004_/3q.webp",
+        "material": "RSV-004_/material.webp",
+        "sole": "RSV-004_/sole.webp",
+        "detail": "RSV-004_/detail.webp"
+      },
+      "sections": [
+        {
+          "label": "THE ORIGINAL",
+          "heading": "70 years and no apology.",
+          "body": "Built for frozen pitches in post-war Germany. A rubber gum sole when everyone else used studs. The Samba has never been updated because it never needed to be.",
+          "type": "story",
+          "imageKey": "threequarter"
+        },
+        {
+          "label": "CONSTRUCTION",
+          "heading": "T-toe reinforcement. Gum sole.",
+          "body": "The T-toe rubber overlay is as structural as it is iconic. The gum sole — unaltered since 1950 — remains the benchmark for indoor court grip.",
+          "type": "material",
+          "imageKey": "material"
+        },
+        {
+          "label": "ARCHIVE SPECS",
+          "type": "specs",
+          "imageKey": "sole"
+        }
+      ]
+    },
+    {
+      "id": "RSV-005_",
+      "storeType": "RSV",
+      "code": "005",
+      "name": "Gel-Lyte III",
+      "subtitle": "OG",
+      "brand": "Asics",
+      "year": 1990,
+      "colorway": "White / Grey",
+      "material": "Mesh / Leather",
+      "designer": "Shigeyuki Mori",
+      "sku": "H63K0-0101",
+      "retail": "$85",
+      "tag": "THE SPLIT TONGUE",
+      "isDark": true,
+      "images": {
+        "hero": "RSV-005_/hero.webp",
+        "threequarter": "RSV-005_/3q.webp",
+        "material": "RSV-005_/material.webp",
+        "sole": "RSV-005_/sole.webp",
+        "detail": "RSV-005_/detail.webp"
+      },
+      "sections": [
+        {
+          "label": "THE SPLIT TONGUE",
+          "heading": "One problem. One solution.",
+          "body": "Runners complained of tongue slip. Shigeyuki Mori split it. The resulting design became the most recognizable detail in running shoe history.",
+          "type": "story",
+          "imageKey": "threequarter"
+        },
+        {
+          "label": "GEL TECHNOLOGY",
+          "heading": "Silicone gel in the midsole.",
+          "body": "The ASICS GEL cushioning system was revolutionary in 1990 — a silicone polymer that absorbed impact across multiple planes of movement.",
+          "type": "material",
+          "imageKey": "material"
+        },
+        {
+          "label": "ARCHIVE SPECS",
+          "type": "specs",
+          "imageKey": "sole"
+        }
+      ]
+    },
+    {
+      "id": "RSV-006_",
+      "storeType": "RSV",
+      "code": "006",
+      "name": "Air Force 1",
+      "subtitle": "Low '82",
+      "brand": "Nike",
+      "year": 1982,
+      "colorway": "White / White",
+      "material": "Leather",
+      "designer": "Bruce Kilgore",
+      "sku": "CW2288-111",
+      "retail": "$90",
+      "tag": "THE FIRST",
+      "isDark": false,
+      "images": {
+        "hero": "RSV-006_/hero.webp",
+        "threequarter": "RSV-006_/3q.webp",
+        "material": "RSV-006_/material.webp",
+        "sole": "RSV-006_/sole.webp",
+        "detail": "RSV-006_/detail.webp"
+      },
+      "sections": [
+        {
+          "label": "THE FIRST",
+          "heading": "First basketball shoe with Nike Air.",
+          "body": "Bruce Kilgore's low-profile design democratized Air technology. It was retired in 1984 and brought back in 1986 by demand — from Baltimore.",
+          "type": "story",
+          "imageKey": "threequarter"
+        },
+        {
+          "label": "CONSTRUCTION",
+          "heading": "Perforated leather. Air unit.",
+          "body": "The herringbone outsole pattern, the pivot point, the single-piece midsole with encapsulated Air — a construction so right it's been unchanged for 40 years.",
+          "type": "material",
+          "imageKey": "material"
+        },
+        {
+          "label": "ARCHIVE SPECS",
+          "type": "specs",
+          "imageKey": "sole"
+        }
+      ]
+    }
+  ]
+}
