@@ -783,7 +783,7 @@ _LOC_ALIASES = {
     "lakeland": "LKL", "lakeland square": "LKL",
     "paddock": "PDM", "paddock mall": "PDM", "ocala": "PDM",
     "tallahassee": "THL", "tally": "THL",
-    "brandon": "BRN", "brandon exchange": "BRN",
+    "brandon": "BTC", "brandon exchange": "BTC", "brandon town center": "BTC", "brandon mall": "BTC",
     "international plaza": "INP", "int plaza": "INP", "tampa plaza": "INP",
     "university mall": "UNM", "university tampa": "UNM",
     "tampa premium": "TPA", "tampa outlets": "TPA",
@@ -794,6 +794,10 @@ _LOC_ALIASES = {
     "gainesville": "GVA", "celebration pointe": "GVA",
     "celebration": "CEL-K", "kissimmee": "CEL-K", "celebration kissimmee": "CEL-K",
     "osceola": "KSM", "kissimmee osceola": "KSM",
+    "nike clearance 192": "NC192", "clearance 192": "NC192",
+    "store 192": "NC192", "us 192": "NC192", "ncs 192": "NC192",
+    "the loop": "NCLP", "loop": "NCLP", "nike clearance loop": "NCLP",
+    "clearance loop": "NCLP", "loop clearance": "NCLP",
 }
 
 def resolve_location_nlp(text: str) -> tuple:

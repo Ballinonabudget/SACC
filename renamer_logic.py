@@ -6,6 +6,15 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+# DJI Pocket 3 native stem: DJI_YYYYMMDDHHMMSS_NNNN_D[_...]
+# The 14-digit timestamp is redundant once the shoot date is in the SACC prefix.
+_DJI_STEM_PAT = re.compile(r'^DJI_\d{14}_(\d{4}.*)$', re.IGNORECASE)
+
+def _normalize_cam_stem(stem: str) -> str:
+    """Collapse DJI_YYYYMMDDHHMMSS_NNNN… → DJI3_NNNN… in original stems."""
+    m = _DJI_STEM_PAT.match(stem)
+    return f"DJI3_{m.group(1)}" if m else stem
+
 LOCATION_DATA = {
     "FLM": {"name": "The Florida Mall", "type": "MALL", "region": "Orlando"},
     "MAM": {"name": "Mall at Millenia", "type": "MALL", "region": "Orlando"},
@@ -21,7 +30,7 @@ LOCATION_DATA = {
     "LKL": {"name": "Lakeland Square Mall", "type": "MALL", "region": "Lakeland"},
     "PDM": {"name": "Paddock Mall", "type": "MALL", "region": "Ocala"},
     "THL": {"name": "Tallahassee Mall", "type": "MALL", "region": "Tallahassee"},
-    "BRN": {"name": "Brandon Exchange (Brandon Mall)", "type": "MALL", "region": "Tampa"},
+    "BTC": {"name": "Brandon Exchange (Brandon Town Center)", "type": "MALL", "region": "Tampa"},
     "INP": {"name": "International Plaza", "type": "MALL", "region": "Tampa"},
     "UNM": {"name": "University Mall", "type": "MALL", "region": "Tampa"},
     "TPA": {"name": "Tampa Premium Outlets", "type": "NFS", "region": "Tampa"},
@@ -31,7 +40,9 @@ LOCATION_DATA = {
     "DOL": {"name": "Dolphin Mall", "type": "NFS", "region": "Miami"},
     "GVA": {"name": "Gainesville (Celebration Pointe)", "type": "NFS", "region": "Gainesville"},
     "CEL-K": {"name": "Celebration (Kissimmee)", "type": "NFS", "region": "Kissimmee"},
-    "KSM": {"name": "Kissimmee (Osceola Pkwy)", "type": "NCS", "region": "Kissimmee"}
+    "KSM": {"name": "Kissimmee (Osceola Pkwy)", "type": "NCS", "region": "Kissimmee"},
+    "NC192": {"name": "Nike Clearance Store 192 (US-192, defunct, pre-Loop)", "type": "NCS", "region": "Kissimmee"},
+    "NCLP": {"name": "Nike Clearance Store at the Loop", "type": "NCS", "region": "Kissimmee"}
 }
 
 def _ffprobe_candidates():
@@ -151,7 +162,7 @@ def run_vibe_renamer(folder_path, loc_code, identifier, dry_run=False):
         if base_orig_clean == base_orig:   # full pattern didn't match — try partial
             base_orig_clean = re.sub(partial_prefix_pat, "", base_orig)
 
-        new_name = f"{loc_header}_{date_str}_{identifier_clean}_{cam}_{base_orig_clean}{ext}"
+        new_name = f"{loc_header}_{date_str}_{identifier_clean}_{cam}_{_normalize_cam_stem(base_orig_clean)}{ext}"
         new_path = os.path.join(folder_path, new_name)
 
         if not dry_run:

@@ -147,7 +147,7 @@ _LOC_ALIASES = {
     "lakeland": "LKL", "lakeland square": "LKL",
     "paddock": "PDM", "paddock mall": "PDM", "ocala": "PDM",
     "tallahassee": "THL", "tally": "THL",
-    "brandon": "BRN", "brandon exchange": "BRN",
+    "brandon": "BTC", "brandon exchange": "BTC", "brandon town center": "BTC", "brandon mall": "BTC",
     "international plaza": "INP", "int plaza": "INP",
     "university mall": "UNM", "university tampa": "UNM",
     "tampa premium": "TPA", "tampa outlets": "TPA",
@@ -158,6 +158,10 @@ _LOC_ALIASES = {
     "gainesville": "GVA", "celebration pointe": "GVA",
     "celebration": "CEL-K", "kissimmee": "CEL-K",
     "osceola": "KSM", "kissimmee osceola": "KSM",
+    "nike clearance 192": "NC192", "clearance 192": "NC192",
+    "store 192": "NC192", "us 192": "NC192", "ncs 192": "NC192",
+    "the loop": "NCLP", "loop": "NCLP", "nike clearance loop": "NCLP",
+    "clearance loop": "NCLP", "loop clearance": "NCLP",
 }
 
 def resolve_nlp(text):
@@ -985,7 +989,7 @@ _KNOWN_ERRORS = [
         "description": "A location code entered in the Renamer or Pipeline location override field "
                        "is not in the SACC location database.",
         "resolution": "Use a valid SACC code: PDM, FLM, MAM, OFS, WOM, VLD, IDR, LBV, WFL, WGN, "
-                      "OMP, SEM, LKL, THL, BRN, INP, UNM, TPA, HVP, AVE, LCN, DOL, GVA, CEL-K, KSM.",
+                      "OMP, SEM, LKL, THL, BTC, INP, UNM, TPA, HVP, AVE, LCN, DOL, GVA, CEL-K, KSM, NC192, NCLP.",
         "example": "",
     },
     {

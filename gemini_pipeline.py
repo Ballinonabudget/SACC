@@ -33,6 +33,7 @@ import os
 import json
 import time
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
@@ -44,7 +45,11 @@ _gemini_key      = os.getenv("GEMINI_API_KEY")
 
 _USE_VERTEX  = bool(_vertex_project)
 _GCS_BUCKET  = os.getenv("GCS_BUCKET", "")
-BATCH_THRESHOLD = int(os.getenv("BATCH_THRESHOLD", "50"))
+BATCH_THRESHOLD     = int(os.getenv("BATCH_THRESHOLD", "50"))
+# Stage 5 — Async Parallel Upload. Standard-API concurrency cap.
+# Gemini tolerates moderate concurrency; 3 is a safe default on most plans.
+# Bump to 5-8 if you have higher quota. Set to 1 to force fully sequential.
+GEMINI_PARALLEL     = max(1, int(os.getenv("GEMINI_PARALLEL", "3")))
 
 if _USE_VERTEX:
     try:
@@ -64,92 +69,113 @@ if not _USE_VERTEX:
         import google.generativeai as genai
         if _gemini_key:
             genai.configure(api_key=_gemini_key)
-        _GEMINI_MODEL_NAME = "models/gemini-2.5-pro"
+        # GEMINI_MODEL accepts either bare ID or "models/<id>" form.
+        _gemini_model_env = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
+        _GEMINI_MODEL_NAME = (
+            _gemini_model_env if _gemini_model_env.startswith("models/")
+            else f"models/{_gemini_model_env}"
+        )
     except ImportError:
         genai = None
 
 # ── Prompt (shared across both backends) ─────────────────────────────────────
 #
-# Location detection methodology (updated 2026-04-23)
-# ----------------------------------------------------
-# GPS-based geofencing was rescinded due to coordinate inaccuracy.
-# [Custom Name] / location is now determined here, at Stage 8, by asking
-# the model to read visual signage and listen to the audio transcript.
+# Schema philosophy (v2.1 — updated 2026-05-15)
+# ---------------------------------------------
+# Gemini does "eyes only" — reports what's visible, no inferences.
+# Heavy lifting (model name, colorway, MSRP, release date) is delegated to
+# KicksDB via the SKU. Location is resolved before this call (Stage 2 anchor
+# scan or Stage 0 GPS), so Gemini doesn't extract loc_code anymore — only
+# brand/logo evidence that downstream Stage 9 cross-check can verify against
+# the anchor's brand_environment.
 #
-# Visual signals to read:
-#   - Store entrance / exterior signage (Nike, Foot Locker, etc.)
-#   - Mall directory boards, wayfinding signs, pylon signs
-#   - Shopping bags carried by staff or customers
-#   - Employee uniforms, lanyards, name badges
-#   - Storefront banners, window graphics, brand logos
+# Output: a flat JSON with the v2.1 schema keys defined in _parse_response.
 #
-# Audio signals to transcribe:
-#   - Staff announcing the store name on camera
-#   - PA system announcements naming the mall or store
-#   - Customer / operator verbal references to location
-#
-# The model maps its observation to one of the SACC location codes below.
-# If no match is possible, it returns null and sets confidence = "low".
-#
-_LOCATION_HINT = """\
-Known SACC location codes (Florida retail network):
-  FLM=Florida Mall, MAM=Mall at Millenia, OFS=Orlando Fashion Square,
-  WOM=West Oaks Mall, VLD=Vineland Premium Outlets, IDR=International Drive,
-  LBV=Lake Buena Vista, WFL=Waterford Lakes, WGN=Winter Garden Village,
-  OMP=Orlando Marketplace, SEM=Seminole Towne Center, LKL=Lakeland Square Mall,
-  PDM=Paddock Mall (Ocala), THL=Tallahassee Mall, BRN=Brandon Exchange,
-  INP=International Plaza (Tampa), UNM=University Mall (Tampa),
-  TPA=Tampa Premium Outlets, HVP=Hyde Park Village (Tampa),
-  AVE=Aventura Mall, LCN=Lincoln Road, DOL=Dolphin Mall,
-  GVA=Gainesville Celebration Pointe, CEL-K=Celebration Kissimmee,
-  KSM=Kissimmee Osceola Pkwy"""
+_ANALYSIS_PROMPT = """
+Watch this short video clip carefully — both video and audio. You are
+reporting EYES-ONLY observations, not inferences. Return ONLY a JSON
+object (no markdown fences, no commentary) with exactly these fields:
 
-_ANALYSIS_PROMPT = f"""
-Watch this short video clip carefully — both video and audio.
-Extract and return a strictly formatted JSON object with exactly these fields:
+CLASSIFICATION
+  shoe_visible    — true if at least one shoe (on foot, on shelf, in hand,
+                    or in a box) is visible in the clip; false otherwise.
+  venue_visible   — true if any store signage, brand wall, shelf wall,
+                    or store-environment context is visible.
 
-SNEAKER FIELDS
-  Model    — full marketing name of the shoe (e.g. "Air Jordan 1 Retro High OG Chicago")
-  SKU      — the style code / product code (e.g. "555088-101")
-  Size     — visible size label if shown (e.g. "10.5"), otherwise null
-  Price    — visible retail price if shown (e.g. "$180"), otherwise null
+PRODUCT (only populated when shoe_visible = true)
+  sku_visible     — style code printed on box label / hang tag, e.g.
+                    "555088-101", "DZ5485-612". Read each character
+                    carefully — "I" vs "1" matters. Empty string if no
+                    code is visible anywhere in the clip.
+  product_hint    — free-text description of the shoe IF clearly visible
+                    (e.g. "Air Jordan 1 Retro High OG"). Empty if unsure.
+                    Do NOT guess from logo alone.
+  colorway_dominant — primary visible color or colorway shorthand, white
+                      listed first when present (e.g. "White/Black-Red").
+                      Empty if no clear colorway is in frame.
 
-LOCATION FIELDS
-  Location_Visual    — name of the store or retail location identified from
-                       visible signage, storefronts, mall directories, banners,
-                       uniforms, or shopping bags. Use the most specific name
-                       visible (e.g. "Nike Factory Store Vineland Premium Outlets").
-                       Return null if no signage is readable.
-  Location_Audio     — store or location name mentioned verbally in the audio
-                       (staff speech, PA announcements, operator narration).
-                       Transcribe the exact phrase used.  Return null if silent
-                       or location is not mentioned.
-  Location_Code      — map your observation to one of these SACC codes:
-{_LOCATION_HINT}
-                       Return the best matching code (e.g. "VLD"), or null if
-                       no confident match is possible.
-  Location_Confidence — "high"   (clear, unambiguous signage or verbal confirmation)
-                         "medium" (partial signage, indirect branding cues)
-                         "low"    (inference only — no direct evidence)
-                         null     (location completely unidentifiable)
+BRAND (any visible brand evidence — used by Stage 9 conflict check)
+  visible_brands  — list of brand marks visible on shoes, boxes, signs,
+                    or apparel in the clip. Examples: ["Nike", "Jordan",
+                    "Adidas", "Converse", "New Balance"]. Empty list if
+                    no brand mark is visible.
+
+VENUE (only when venue_visible = true; helps Stage 9 verify anchor)
+  visible_signage — list of any store-name text on visible signage
+                    (e.g. ["Nike Factory Store", "Footlocker", "Clearance"]).
+                    Empty list if no readable signage.
+  shelf_layout    — ONE of: "top-loading", "multi-rack", "wall-display",
+                    "hash_wall", "unknown".
+                    top-loading  = shoe-on-box-on-shelf (mall stores)
+                    multi-rack   = open racks of mixed inventory (clearance)
+                    wall-display = featured shoes mounted on walls
+                    hash_wall    = colored-sticker discount wall
+                    unknown      = layout not visible / ambiguous
+  brand_environment — ONE of: "Nike-only", "Multi-brand", "Adidas-focused",
+                      "Unknown".
+
+PRICING (any visible pricing evidence)
+  price_retail    — MSRP visible on hang tag / shelf label (e.g. "$190"). "" if none.
+  price_observed  — current selling price on tag / sticker (e.g. "$59"). "" if none.
+  price_audio     — any price mentioned verbally in audio (transcribe exactly). "" if silent.
+  price_type      — "retail" | "outlet" | "sale" | "hash_wall" | "unknown" | ""
+  is_hash_wall    — true only when colored sticker dots or a discount wall
+                    are explicitly visible.
+
+EVENTS
+  drop_events     — list of moments where a shoe box is revealed, opened,
+                    unboxed, or a shoe is dropped on camera. Each item:
+                      timestamp_sec — float, seconds offset
+                      confidence    — 0.0–1.0
+                      sku           — style code if visible, else ""
+                      notes         — short phrase
+                    Empty list if none.
 
 Rules:
-- Base all extractions purely on what is visible or audible in the video.
-- Return ONLY the JSON object. No markdown fences, no commentary.
-- If a field cannot be determined, use null.
-- For Location_Code, prefer visual evidence over audio when they conflict.
+- Report only what is visibly or audibly present. No inferences.
+- If a field cannot be determined, use "" (empty string) for text fields,
+  [] for lists, false for booleans, "unknown" for the enum fields where
+  noted.
+- Do NOT invent SKUs. A misread digit breaks the KicksDB lookup.
 
 Example:
-{{
-  "Model": "Air Jordan 1 Retro High OG Chicago",
-  "SKU": "555088-101",
-  "Size": "10.5",
-  "Price": "$180",
-  "Location_Visual": "Nike Factory Store at Vineland Premium Outlets",
-  "Location_Audio": "we're here at Vineland",
-  "Location_Code": "VLD",
-  "Location_Confidence": "high"
-}}
+{
+  "shoe_visible": true,
+  "venue_visible": false,
+  "sku_visible": "DZ4549-400",
+  "product_hint": "",
+  "colorway_dominant": "White/Black-Red",
+  "visible_brands": ["Nike"],
+  "visible_signage": [],
+  "shelf_layout": "unknown",
+  "brand_environment": "Unknown",
+  "price_retail": "$190",
+  "price_observed": "$59",
+  "price_audio": "$59",
+  "price_type": "hash_wall",
+  "is_hash_wall": true,
+  "drop_events": []
+}
 """
 
 # ── Retry helper ──────────────────────────────────────────────────────────────
@@ -190,11 +216,12 @@ def analyze_sneaker_video(proxy_path, original_file=None, original_path=None):
         original_file = os.path.basename(proxy_path)
 
     base_result = {
-        "original_file": original_file,
-        "original_path": original_path or "",
-        "proxy_file":    os.path.basename(proxy_path),
-        "analysed_at":   None,
-        "proxy_deleted": False,     # pipeline sets this True after cleanup_proxies()
+        "schema_version": 2.1,
+        "original_file":  original_file,
+        "original_path":  original_path or "",
+        "proxy_file":     os.path.basename(proxy_path),
+        "analysed_at":    None,
+        "proxy_deleted":  False,    # pipeline sets this True after cleanup_proxies()
     }
 
     if _USE_VERTEX:
@@ -258,7 +285,7 @@ def _analyze_gemini(proxy_path, base_result):
         video_file = _retry(_upload)
 
         def _infer():
-            model    = genai.GenerativeModel("models/gemini-2.5-pro")
+            model    = genai.GenerativeModel(_GEMINI_MODEL_NAME)
             response = model.generate_content(
                 [video_file, _ANALYSIS_PROMPT],
                 request_options={"timeout": 90},
@@ -284,19 +311,62 @@ def _analyze_gemini(proxy_path, base_result):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _parse_drop_events(raw):
+    """Validate and normalise the Drop_Events array from Gemini output."""
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for e in raw:
+        if not isinstance(e, dict):
+            continue
+        ts = e.get("timestamp_sec")
+        if ts is None:
+            continue
+        try:
+            ts = float(ts)
+        except (TypeError, ValueError):
+            continue
+        conf = e.get("confidence")
+        try:
+            conf = round(float(conf), 3) if conf is not None else None
+        except (TypeError, ValueError):
+            conf = None
+        out.append({
+            "timestamp_sec": ts,
+            "confidence":    conf,
+            "sku":           str(e.get("sku")   or "").strip(),
+            "notes":         str(e.get("notes") or "").strip(),
+        })
+    return out
+
+
 def _parse_response(raw_text):
     """
-    Strip markdown fences and parse JSON from the model response.
+    Strip markdown fences and parse the model response into the
+    SACC v2.1 flat schema.
 
-    Handles both sneaker fields and the location detection fields added
-    when GPS geofencing was rescinded (2026-04-23).
+    Schema v2.1 keys (set here — pipeline adds loc_code_anchor /
+    conflict_detected / needs_review / schema_version):
 
-    Location fields in returned dict:
-      Location_Visual     — signage/storefront text read by the model
-      Location_Audio      — verbally mentioned location from audio transcript
-      loc_code_confirmed  — SACC location code if confidence is high/medium
-                            (written as 'loc_code_confirmed' for pipeline use)
-      Location_Confidence — "high" | "medium" | "low" | null
+      shoe_visible        bool
+      venue_visible       bool
+      sku_visible         str   — style code (relational key for KicksDB)
+      product_hint        str   — free-text shoe description if confidently visible
+      colorway_dominant   str   — primary colorway shorthand (white-first)
+      visible_brands      list  — brand marks seen (Stage 9 conflict input)
+      visible_signage     list  — store-name text from signage
+      shelf_layout        str   — top-loading | multi-rack | wall-display | hash_wall | unknown
+      brand_environment   str   — Nike-only | Multi-brand | Adidas-focused | Unknown
+      price_retail        str   — MSRP if visible
+      price_observed      str   — current selling price
+      price_audio         str   — price spoken in audio
+      price_type          str   — retail | outlet | sale | hash_wall | unknown | ""
+      is_hash_wall        bool
+      drop_events         list  — {timestamp_sec, confidence, sku, notes}
+
+    Accepts both v2.1 snake_case keys AND v1 PascalCase keys from older
+    Gemini responses (legacy compat — keeps the 138 already-analysed
+    JSONs reprocessable through this parser if needed).
     """
     import re as _re
     cleaned = _re.sub(r"^```(?:json)?\s*", "", raw_text.strip())
@@ -305,27 +375,65 @@ def _parse_response(raw_text):
 
     def _str(v):
         return str(v).strip() if v not in (None, "", "null") else ""
-
-    loc_code  = _str(data.get("Location_Code") or data.get("location_code"))
-    confidence = _str(data.get("Location_Confidence") or
-                      data.get("location_confidence"))
-
-    # Only promote to loc_code_confirmed when model is high or medium confidence
-    confirmed = loc_code if confidence in ("high", "medium") else ""
+    def _bool(v):
+        if isinstance(v, bool): return v
+        if isinstance(v, str):  return v.strip().lower() in ("true", "1", "yes")
+        return bool(v)
+    def _list(v):
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if str(x).strip()]
+        return []
+    def _enum(v, allowed, default):
+        s = _str(v).lower().replace(" ", "_").replace("-", "_")
+        # Normalize known variants — Gemini sometimes drops hyphens or uses spaces
+        alias = {
+            "top_loading":   "top-loading",
+            "multi_rack":    "multi-rack",
+            "wall_display":  "wall-display",
+            "hash_wall":     "hash_wall",
+            "nike_only":     "Nike-only",
+            "multi_brand":   "Multi-brand",
+            "adidas_focused":"Adidas-focused",
+            "unknown":       "unknown",
+        }
+        canon = alias.get(s, _str(v))
+        return canon if canon in allowed else default
 
     return {
-        # Sneaker fields
-        "Model": _str(data.get("Model") or data.get("model")),
-        "SKU":   _str(data.get("SKU")   or data.get("sku")),
-        "Size":  _str(data.get("Size")  or data.get("size")),
-        "Price": _str(data.get("Price") or data.get("price")),
-        # Location fields — from visual + audio analysis
-        "Location_Visual":     _str(data.get("Location_Visual")     or
-                                    data.get("location_visual")),
-        "Location_Audio":      _str(data.get("Location_Audio")      or
-                                    data.get("location_audio")),
-        "Location_Confidence": confidence,
-        "loc_code_confirmed":  confirmed,  # used by fcp_namer.apply_confirmed_locations()
+        # Classification
+        "shoe_visible":      _bool(data.get("shoe_visible")  or data.get("Shoe_Visible")),
+        "venue_visible":     _bool(data.get("venue_visible") or data.get("Venue_Visible")),
+
+        # Product
+        "sku_visible":       _str(data.get("sku_visible") or data.get("SKU") or data.get("sku")),
+        "product_hint":      _str(data.get("product_hint") or data.get("Product_Hint")),
+        "colorway_dominant": _str(data.get("colorway_dominant") or data.get("Colorway_Dominant")),
+
+        # Brand evidence (input to Stage 9 conflict check)
+        "visible_brands":    _list(data.get("visible_brands") or data.get("brand_logos")),
+
+        # Venue evidence
+        "visible_signage":   _list(data.get("visible_signage") or data.get("store_signage")),
+        "shelf_layout":      _enum(
+            data.get("shelf_layout"),
+            {"top-loading","multi-rack","wall-display","hash_wall","unknown"},
+            "unknown",
+        ),
+        "brand_environment": _enum(
+            data.get("brand_environment"),
+            {"Nike-only","Multi-brand","Adidas-focused","Unknown"},
+            "Unknown",
+        ),
+
+        # Pricing
+        "price_retail":      _str(data.get("price_retail")   or data.get("Price_Retail")),
+        "price_observed":    _str(data.get("price_observed") or data.get("Price_Observed") or data.get("Price")),
+        "price_audio":       _str(data.get("price_audio")    or data.get("Price_Audio")),
+        "price_type":        _str(data.get("price_type")     or data.get("Price_Type")),
+        "is_hash_wall":      _bool(data.get("is_hash_wall")  or data.get("Is_Hash_Wall")),
+
+        # Events
+        "drop_events":       _parse_drop_events(data.get("drop_events") or data.get("Drop_Events")),
     }
 
 
@@ -384,13 +492,53 @@ def route_analysis(proxy_files: list, original_map: dict) -> list:
 # ── Standard path ─────────────────────────────────────────────────────────────
 
 def _standard_batch(proxy_files: list, original_map: dict) -> list:
-    """Sequential per-file standard API calls."""
-    results = []
-    for i, proxy_path in enumerate(proxy_files, 1):
-        orig_file, orig_path = original_map.get(proxy_path, (None, None))
-        print(f"  [{i}/{len(proxy_files)}] {Path(proxy_path).name}")
-        result = analyze_sneaker_video(proxy_path, orig_file, orig_path)
-        results.append(result)
+    """
+    Stage 5 — Async Parallel Upload via thread pool.
+
+    Concurrency = GEMINI_PARALLEL (env, default 3). Output preserves input
+    order so downstream index-based lookups stay valid.
+
+    Threading instead of asyncio: the google.generativeai / vertexai
+    clients are sync; threading lets us parallelise without rewriting
+    analyze_sneaker_video. Calls are network-I/O-bound so the GIL is
+    released during waits.
+    """
+    n = len(proxy_files)
+    if n == 0:
+        return []
+    workers = min(GEMINI_PARALLEL, n)
+    if workers == 1:
+        # Skip the pool overhead for tiny batches / forced-sequential mode
+        results = []
+        for i, p in enumerate(proxy_files, 1):
+            orig_file, orig_path = original_map.get(p, (None, None))
+            print(f"  [{i}/{n}] {Path(p).name}")
+            results.append(analyze_sneaker_video(p, orig_file, orig_path))
+        return results
+
+    print(f"  [parallel] {workers} workers, {n} clip(s)")
+    results: list = [None] * n   # type: ignore[list-item]
+    completed = 0
+
+    def _job(idx_path):
+        i, p = idx_path
+        orig_file, orig_path = original_map.get(p, (None, None))
+        return i, analyze_sneaker_video(p, orig_file, orig_path)
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = {ex.submit(_job, (i, p)): (i, p)
+                   for i, p in enumerate(proxy_files)}
+        for fut in as_completed(futures):
+            i, p = futures[fut]
+            completed += 1
+            try:
+                idx, result = fut.result()
+                results[idx] = result
+                tag = "ERR" if result.get("error") else "OK"
+            except Exception as e:
+                results[i] = {"error": str(e), "proxy_file": Path(p).name}
+                tag = "ERR"
+            print(f"  [{completed}/{n}] {tag}  {Path(p).name}")
     return results
 
 

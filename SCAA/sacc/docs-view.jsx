@@ -306,7 +306,7 @@ const DOCS_SECTIONS = [
       { name: 'SEM', type: 'MALL · Sanford',        purpose: 'Seminole Towne Center',           behavior: '', notes: '' },
       { name: 'LKL', type: 'MALL · Lakeland',       purpose: 'Lakeland Square Mall',            behavior: '', notes: '' },
       { name: 'THL', type: 'MALL · Tallahassee',    purpose: 'Tallahassee Mall',                behavior: '', notes: '' },
-      { name: 'BRN', type: 'MALL · Tampa',          purpose: 'Brandon Exchange (Brandon Mall)', behavior: '', notes: '' },
+      { name: 'BTC', type: 'MALL · Tampa',          purpose: 'Brandon Exchange (Brandon Town Center)', behavior: '', notes: '' },
       { name: 'INP', type: 'MALL · Tampa',          purpose: 'International Plaza',             behavior: '', notes: '' },
       { name: 'UNM', type: 'MALL · Tampa',          purpose: 'University Mall',                 behavior: '', notes: '' },
       { name: 'VLD', type: 'NFS · Orlando',         purpose: 'Vineland Premium Outlets',        behavior: '', notes: '' },
@@ -321,6 +321,8 @@ const DOCS_SECTIONS = [
       { name: 'GVA', type: 'NFS · Gainesville',     purpose: 'Gainesville (Celebration Pointe)',behavior: '', notes: '' },
       { name: 'CEL-K', type: 'NFS · Kissimmee',    purpose: 'Celebration (Kissimmee)',          behavior: '', notes: '' },
       { name: 'KSM', type: 'NCS · Kissimmee',       purpose: 'Kissimmee (Osceola Pkwy)',        behavior: '', notes: '' },
+      { name: 'NC192', type: 'NCS · Kissimmee',     purpose: 'Nike Clearance Store 192 (US-192, defunct, pre-Loop)', behavior: 'archive-only', notes: 'Defunct predecessor of NCLP. Covers pre-2019 / early-2019 footage.' },
+      { name: 'NCLP',  type: 'NCS · Kissimmee',     purpose: 'Nike Clearance Store at the Loop',                    behavior: '', notes: 'Active successor to NC192 on the US-192 / Loop corridor.' },
     ],
   },
 ];

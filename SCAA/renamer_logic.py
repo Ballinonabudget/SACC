@@ -20,7 +20,7 @@ LOCATION_DATA = {
     "LKL": {"name": "Lakeland Square Mall", "type": "MALL", "region": "Lakeland"},
     "PDM": {"name": "Paddock Mall", "type": "MALL", "region": "Ocala"},
     "THL": {"name": "Tallahassee Mall", "type": "MALL", "region": "Tallahassee"},
-    "BRN": {"name": "Brandon Exchange (Brandon Mall)", "type": "MALL", "region": "Tampa"},
+    "BTC": {"name": "Brandon Exchange (Brandon Town Center)", "type": "MALL", "region": "Tampa"},
     "INP": {"name": "International Plaza", "type": "MALL", "region": "Tampa"},
     "UNM": {"name": "University Mall", "type": "MALL", "region": "Tampa"},
     "TPA": {"name": "Tampa Premium Outlets", "type": "NFS", "region": "Tampa"},
@@ -30,7 +30,9 @@ LOCATION_DATA = {
     "DOL": {"name": "Dolphin Mall", "type": "NFS", "region": "Miami"},
     "GVA": {"name": "Gainesville (Celebration Pointe)", "type": "NFS", "region": "Gainesville"},
     "CEL-K": {"name": "Celebration (Kissimmee)", "type": "NFS", "region": "Kissimmee"},
-    "KSM": {"name": "Kissimmee (Osceola Pkwy)", "type": "NCS", "region": "Kissimmee"}
+    "KSM": {"name": "Kissimmee (Osceola Pkwy)", "type": "NCS", "region": "Kissimmee"},
+    "NC192": {"name": "Nike Clearance Store 192 (US-192, defunct, pre-Loop)", "type": "NCS", "region": "Kissimmee"},
+    "NCLP": {"name": "Nike Clearance Store at the Loop", "type": "NCS", "region": "Kissimmee"}
 }
 
 def extract_metadata(file_path):

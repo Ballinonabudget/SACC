@@ -98,6 +98,14 @@ DATE_FMT             = "%Y%m%d"
 
 _UNKNOWN_LOC = "UNKNOWN"       # placeholder when no loc_code is available at rename time
 
+# DJI Pocket 3 native stem: DJI_YYYYMMDDHHMMSS_NNNN_D[_...]
+_DJI_STEM_PAT = re.compile(r'^DJI_\d{14}_(\d{4}.*)$', re.IGNORECASE)
+
+def _normalize_cam_stem(stem: str) -> str:
+    """Collapse DJI_YYYYMMDDHHMMSS_NNNN… → DJI3_NNNN… in original stems."""
+    m = _DJI_STEM_PAT.match(stem)
+    return f"DJI3_{m.group(1)}" if m else stem
+
 # ── Location database (name + type only — GPS centroids removed) ──────────────
 #
 # GPS geofencing was rescinded (2026-04-23) due to coordinate inaccuracy.
@@ -124,7 +132,7 @@ LOCATION_DB: dict[str, dict] = {
     "LKL":   {"name": "Lakeland Square Mall",             "type": "MALL", "region": "Lakeland"},
     "PDM":   {"name": "Paddock Mall",                     "type": "MALL", "region": "Ocala"},
     "THL":   {"name": "Tallahassee Mall",                 "type": "MALL", "region": "Tallahassee"},
-    "BRN":   {"name": "Brandon Exchange (Brandon Mall)",  "type": "MALL", "region": "Tampa"},
+    "BTC":   {"name": "Brandon Exchange (Brandon Town Center)",  "type": "MALL", "region": "Tampa"},
     "INP":   {"name": "International Plaza",              "type": "MALL", "region": "Tampa"},
     "UNM":   {"name": "University Mall",                  "type": "MALL", "region": "Tampa"},
     "TPA":   {"name": "Tampa Premium Outlets",            "type": "NFS",  "region": "Tampa"},
@@ -135,6 +143,8 @@ LOCATION_DB: dict[str, dict] = {
     "GVA":   {"name": "Gainesville (Celebration Pointe)", "type": "NFS",  "region": "Gainesville"},
     "CEL-K": {"name": "Celebration (Kissimmee)",          "type": "NFS",  "region": "Kissimmee"},
     "KSM":   {"name": "Kissimmee (Osceola Pkwy)",         "type": "NCS",  "region": "Kissimmee"},
+    "NC192": {"name": "Nike Clearance Store 192 (US-192, defunct, pre-Loop)", "type": "NCS", "region": "Kissimmee"},
+    "NCLP":  {"name": "Nike Clearance Store at the Loop",                     "type": "NCS", "region": "Kissimmee"},
 }
 
 _DIR = os.path.dirname(os.path.abspath(__file__))
@@ -148,6 +158,54 @@ if os.path.isfile(_DB_OVERRIDE):
         LOCATION_DB.update(_overrides)
     except Exception as _e:
         print(f"[fcp_namer] WARNING — could not load {_DB_OVERRIDE}: {_e}")
+
+
+# ── Venue fingerprints (shelf_layout, brand_environment) → loc_code candidates ─
+# Consumed by venue_anchor.scan_folder_anchor() when no explicit signage match
+# is found in the anchor scan. The first candidate in each list is the most
+# specific guess; downstream logic may use the rest for ranking or fall-through.
+#
+# Keep this list small and high-signal. Add a (layout, env) row only when
+# the combination is genuinely diagnostic of a known venue.
+VENUE_FINGERPRINTS: dict[tuple[str, str], list[str]] = {
+    ("multi-rack",  "Nike-only"):       ["NC192", "NCLP", "KSM", "OMP"],   # Nike Clearance family
+    ("hash_wall",   "Nike-only"):       ["NC192", "NCLP", "KSM", "OMP"],   # deep-clearance sticker walls
+    ("multi-rack",  "Multi-brand"):     ["BTC"],                            # mall multi-brand stores (Footlocker / Champs / Jimmy Jazz)
+    ("top-loading", "Multi-brand"):     ["BTC"],
+    ("top-loading", "Nike-only"):       ["HVP", "AVE", "LCN"],              # mainline Nike stores (clean shelving)
+    ("wall-display","Nike-only"):       ["HVP", "AVE", "LCN"],
+    ("wall-display","Multi-brand"):     ["BTC"],
+}
+
+
+# ── Camera hardware timeline ──────────────────────────────────────────────────
+# Fallback rules for archival footage that lacks EXIF device tags.
+# Each rule: (filename_prefix, start_YYYYMMDD, end_YYYYMMDD, model_name).
+# First match wins. Model name follows the "space-stripped" filename convention
+# (e.g. "Sony a6300" -> "Sonya6300", matching the iPhone15ProMax pattern).
+# Extend this list as confirmed purchase/use dates are established.
+CAMERA_TIMELINE: list[tuple[str, str, str, str]] = [
+    # Sony a6300 — primary B-roll camera, 2019–2022
+    ("C",    "20190101", "20221231", "Sony a6300"),
+    # iPhone Pro Max line — handheld/photo b-roll, IMG_-prefixed
+    ("IMG_", "20180301", "20190930", "iPhone 8 Plus"),
+    ("IMG_", "20191001", "20201130", "iPhone 11 Pro Max"),
+    ("IMG_", "20201201", "20211031", "iPhone 12 Pro Max"),
+    ("IMG_", "20211101", "20230831", "iPhone 13 Pro Max"),
+    ("IMG_", "20230901", "20241130", "iPhone 15 Pro Max"),
+    ("IMG_", "20241201", "20991231", "iPhone 16 Pro Max"),
+]
+
+
+def _resolve_camera_from_timeline(filename: str, date_str: str | None) -> str | None:
+    """Match filename prefix + shoot date against CAMERA_TIMELINE.
+    Returns the model name (with spaces) or None if no rule applies."""
+    if not filename or not date_str:
+        return None
+    for prefix, start, end, model in CAMERA_TIMELINE:
+        if filename.startswith(prefix) and start <= date_str <= end:
+            return model
+    return None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -221,37 +279,66 @@ class ClipMeta:
         self.ext      = p.suffix.lower()
 
         self.creation_dt = None
-        self.date_str    = datetime.now().strftime(DATE_FMT)
-        self.cam_model   = "Cam"
+        self.date_str    = None
+        self.cam_model   = None
         self.cam_make    = ""
 
-        if ffprobe_data is None:
-            return
+        if ffprobe_data is not None:
+            tags = _get_tags(ffprobe_data)
 
-        tags = _get_tags(ffprobe_data)
+            # ── Creation time — prefer quicktime.creationdate (original shoot date)
+            raw_time = (tags.get("com.apple.quicktime.creationdate") or
+                        tags.get("creation_time"))
+            if raw_time:
+                norm = re.sub(r"[Zz]$", "", raw_time.strip())
+                norm = re.sub(r"[+-]\d{2}:\d{2}$", "", norm)
+                norm = re.sub(r"\.\d+$", "", norm)
+                for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                    try:
+                        self.creation_dt = datetime.strptime(norm, fmt)
+                        self.date_str    = self.creation_dt.strftime(DATE_FMT)
+                        break
+                    except ValueError:
+                        continue
 
-        # ── Creation time — prefer quicktime.creationdate (original shoot date)
-        raw_time = (tags.get("com.apple.quicktime.creationdate") or
-                    tags.get("creation_time"))
-        if raw_time:
-            norm = re.sub(r"[Zz]$", "", raw_time.strip())
-            norm = re.sub(r"[+-]\d{2}:\d{2}$", "", norm)
-            norm = re.sub(r"\.\d+$", "", norm)
-            for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            # ── Camera make / model
+            make  = (tags.get("com.apple.quicktime.make") or tags.get("make") or "").lower()
+            model = (tags.get("com.apple.quicktime.model") or
+                     tags.get("com.apple.proapps.modelname") or
+                     tags.get("model") or "")
+            self.cam_make = make
+            if model:
+                self.cam_model = model.replace(" ", "")
+
+        # ── Date fallback chain: parent folder name → file mtime → today
+        if self.date_str is None:
+            parent_name = p.parent.name
+            m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", parent_name)
+            if m:
                 try:
-                    self.creation_dt = datetime.strptime(norm, fmt)
+                    self.creation_dt = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
                     self.date_str    = self.creation_dt.strftime(DATE_FMT)
-                    break
                 except ValueError:
-                    continue
+                    pass
+        if self.date_str is None:
+            try:
+                mtime = os.path.getmtime(file_path)
+                self.creation_dt = datetime.fromtimestamp(mtime)
+                self.date_str    = self.creation_dt.strftime(DATE_FMT)
+            except OSError:
+                pass
+        if self.date_str is None:
+            self.date_str = datetime.now().strftime(DATE_FMT)
 
-        # ── Camera make / model
-        make  = (tags.get("com.apple.quicktime.make") or tags.get("make") or "").lower()
-        model = (tags.get("com.apple.quicktime.model") or
-                 tags.get("com.apple.proapps.modelname") or
-                 tags.get("model") or "")
-        self.cam_make  = make
-        self.cam_model = model.replace(" ", "") if model else "Cam"
+        # ── Camera timeline fallback (filename prefix + date range)
+        if self.cam_model is None:
+            timeline_model = _resolve_camera_from_timeline(self.filename, self.date_str)
+            if timeline_model:
+                self.cam_model = timeline_model.replace(" ", "")
+
+        # ── Camera fallback: explicit "Unknown" when no device tags
+        if self.cam_model is None:
+            self.cam_model = "Unknown"
 
 
 def extract_clip_meta(file_path: str) -> ClipMeta:
@@ -324,7 +411,7 @@ def build_fcp_name(clip: ClipMeta, loc_code: str | None) -> str:
         custom_name = _UNKNOWN_LOC
 
     return (f"{custom_name}_{clip.date_str}_{clip.cam_model}"
-            f"_{_strip_sacc_prefix(clip.stem)}{clip.ext}")
+            f"_{_normalize_cam_stem(_strip_sacc_prefix(clip.stem))}{clip.ext}")
 
 
 # ── Stage 3 renamer ───────────────────────────────────────────────────────────

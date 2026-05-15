@@ -67,19 +67,23 @@ from pathlib import Path
 _DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _DIR)
 
-from renamer_logic    import run_vibe_renamer, extract_metadata
-from compress_jordans import run_compression, wait_for_proxies, cleanup_proxies
-from gemini_pipeline  import analyze_sneaker_video
-from fcp_namer        import run_fcp_renamer, LOCATION_DB
+from renamer_logic      import run_vibe_renamer, extract_metadata
+from compress_jordans   import run_compression, wait_for_proxies, cleanup_proxies
+from gemini_pipeline    import analyze_sneaker_video
+from fcp_namer          import run_fcp_renamer, LOCATION_DB
+from metadata_extractor import extract_locations_batch, dominant_loc_code
+from venue_anchor       import scan_folder_anchor
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 SYNOLOGY_ROOT = os.getenv("SACC_ROOT",  "/Volumes/Team Bank 12/SACC")
 INBOX_PATH    = os.getenv("SACC_INBOX", os.path.join(SYNOLOGY_ROOT, "Inbox"))
 VIDEO_EXTS    = {".mov", ".mp4", ".m4v"}
 
-# Pre-Flight thresholds
-MIN_DURATION_SECS = 3
-MIN_MOTION_SCORE  = 1
+# Pre-Flight thresholds (Stage 3 — Pre-Flight 2.0)
+MIN_DURATION_SECS    = 2          # clips shorter than this are too brief to analyse
+MIN_FPS              = 1          # framerate sanity — 0 means broken stream
+MIN_BITRATE_PER_PX   = 0.02       # bits per pixel-second; below this is likely a frozen / black clip
+                                  # (1080p @ 30fps with 0.02 bpps ≈ 1.2 Mbps — anything lower is static-ish)
 
 
 # ── Folder helpers ────────────────────────────────────────────────────────────
@@ -148,8 +152,22 @@ def resolve_inbox_folders(inbox):
 
 def preflight_check(file_path):
     """
-    Minimal ffprobe check: duration ≥ 3s and motion proxy > 0.
-    Returns (pass: bool, reasons: list[str])
+    Stage 3 — Pre-Flight 2.0.
+
+    Returns (pass: bool, reasons: list[str]).
+
+    Checks:
+      1. Duration >= MIN_DURATION_SECS
+      2. Framerate >= MIN_FPS  (sanity — broken streams report 0)
+      3. Bits-per-pixel-second >= MIN_BITRATE_PER_PX
+         (cheap static-content proxy: encoders compress frozen footage
+         aggressively, so very low bpps almost always means no motion)
+
+    Note on motion detection: previous implementation called
+    nb_read_frames / duration which (a) was effectively framerate, not
+    motion, and (b) needed -count_frames to even populate. Bitrate-per-px
+    catches the actual failure mode (frozen / black / sticker-only clips)
+    without an extra ffprobe pass.
     """
     ffprobe = os.path.join(_DIR, "ffprobe")
     if not os.path.exists(ffprobe):
@@ -159,16 +177,33 @@ def preflight_check(file_path):
            "-show_streams", "-show_format", file_path]
     try:
         data     = json.loads(subprocess.check_output(cmd, stderr=subprocess.DEVNULL))
-        duration = float(data.get("format", {}).get("duration", 999))
+        fmt      = data.get("format", {}) or {}
+        duration = float(fmt.get("duration", 0) or 0)
         if duration < MIN_DURATION_SECS:
             return False, [f"duration {duration:.1f}s < {MIN_DURATION_SECS}s minimum"]
 
-        streams  = data.get("streams", [])
-        vid      = next((s for s in streams if s.get("codec_type") == "video"), {})
-        nb_frames = int(vid.get("nb_read_frames", vid.get("nb_frames", 999)) or 999)
-        motion_proxy = min(100, int(nb_frames / max(duration, 1)))
-        if motion_proxy < MIN_MOTION_SCORE:
-            return False, ["motion score 0 — no detectable movement in clip"]
+        streams  = data.get("streams", []) or []
+        vid      = next((s for s in streams if s.get("codec_type") == "video"), {}) or {}
+
+        # Framerate sanity (avg_frame_rate is a fraction like "30000/1001")
+        afr = (vid.get("avg_frame_rate") or vid.get("r_frame_rate") or "0/1")
+        try:
+            num, den = afr.split("/")
+            fps = float(num) / float(den) if float(den) else 0.0
+        except (ValueError, ZeroDivisionError):
+            fps = 0.0
+        if fps < MIN_FPS:
+            return False, [f"framerate {fps:.1f} < {MIN_FPS} — broken or static stream"]
+
+        # Static-content proxy via bits per pixel-second
+        bitrate = float(fmt.get("bit_rate", 0) or 0)
+        width   = int(vid.get("width",  0) or 0)
+        height  = int(vid.get("height", 0) or 0)
+        if width and height and bitrate:
+            bpps = bitrate / (width * height * max(fps, 1))
+            if bpps < MIN_BITRATE_PER_PX:
+                return False, [f"bits/px·s {bpps:.4f} < {MIN_BITRATE_PER_PX} — "
+                               f"likely frozen / static content"]
 
         return True, []
     except Exception as e:
@@ -177,7 +212,69 @@ def preflight_check(file_path):
         return True, []
 
 
+def _already_analysed(dest_dir: str, original_file: str) -> bool:
+    """
+    Stage 1 — Idempotency guard.
+
+    Returns True if a completed JSON already exists for `original_file` in
+    <dest_dir>/json/. "Completed" means: file exists, parseable, has a
+    non-null `analysed_at` timestamp, and no top-level `error` field.
+
+    Used by stage_vertex() to skip clips that have already been processed
+    in a prior run. Protects against re-burning Gemini quota on resume.
+    """
+    if not original_file:
+        return False
+    stem      = Path(original_file).stem
+    json_path = os.path.join(dest_dir, "json", f"{stem}.json")
+    if not os.path.isfile(json_path):
+        return False
+    try:
+        with open(json_path) as f:
+            d = json.load(f)
+    except Exception:
+        return False
+    return bool(d.get("analysed_at")) and "error" not in d
+
+
 # ── Pipeline stages ───────────────────────────────────────────────────────────
+
+def stage_gps_extract(files: list) -> str:
+    """
+    STAGE 0 — Extract GPS coordinates from video metadata and resolve the
+    dominant retail location for this recording session.
+
+    Uses metadata_extractor.py which reads ISO6709 GPS data embedded by
+    iPhones in QuickTime atoms (com.apple.quicktime.location.ISO6709).
+
+    Strategy:
+      • Run GPS extraction on all files in the batch simultaneously.
+      • iPhone clips with GPS coordinates are geofenced to a SACC loc_code.
+      • dominant_loc_code() propagates the winning location to the full
+        session — covers Sony/DJI cameras that don't embed GPS.
+
+    Returns the winning loc_code string (e.g. "VLD") or "" on total miss.
+    """
+    if not files:
+        return ""
+
+    print(f"\n[STAGE 0] GPS extraction — {len(files)} file(s)")
+    gps_results = extract_locations_batch(files)
+
+    hits  = [r for r in gps_results.values() if r.get("loc_code")]
+    total = len(gps_results)
+    print(f"  GPS hits: {len(hits)}/{total} file(s) resolved")
+
+    loc, _ = dominant_loc_code(gps_results)
+
+    if loc:
+        print(f"  Session location → {loc}  "
+              f"(propagated to all {total} file(s))")
+    else:
+        print("  No GPS fix — location will fall back to --loc flag or remain UNKNOWN")
+
+    return loc or ""
+
 
 def stage_rename_fcp(inbox, loc_override=None):
     """
@@ -303,11 +400,20 @@ def stage_compress(dest_dir):
 
 def stage_vertex(compress_results, dest_dir):
     """
-    STAGE 8 — Route proxies to Vertex AI via the logic router.
+    STAGE 8 — Route proxies to Vertex AI via the logic router, then enrich
+    each result with KicksDB product metadata (Stage 8b).
 
     The router automatically selects:
       < 50 files  → standard per-file API (immediate)
       >= 50 files → Vertex AI Batch Prediction (async, 50% cheaper)
+
+    Gemini outputs: SKU, Is_Hash_Wall, Price_Observed, Price_Audio,
+    Price_Type, Price_Retail, drop_events.  Location is resolved upstream
+    at Stage 0 (GPS) and written into the filename — not extracted here.
+
+    After Gemini, each SKU is sent to KicksDB (Stage 8b) to append:
+      Model, colorway, release_date, MSRP (kdb_* keys + top-level promotion).
+    KicksDB enrichment is a no-op if KICKSDB_API_KEY is not set.
 
     JSON written per file uses the ORIGINAL renamed filename as stem
     (permanent relational key back to the hi-res master).
@@ -315,6 +421,9 @@ def stage_vertex(compress_results, dest_dir):
     Returns list of paths to written JSON files.
     """
     from gemini_pipeline import route_analysis, BATCH_THRESHOLD
+    from kicksdb_enricher import enrich_result as kdb_enrich, cache_stats as kdb_cache_stats
+    import os as _os
+    _kdb_enabled = bool(_os.getenv("KICKSDB_API_KEY"))
 
     json_dir = os.path.join(dest_dir, "json")
     os.makedirs(json_dir, exist_ok=True)
@@ -324,6 +433,25 @@ def stage_vertex(compress_results, dest_dir):
 
     if not ready:
         print("\n[STAGE 8] No proxies ready — skipping Vertex AI analysis.")
+        return []
+
+    # ── Stage 1 idempotency: skip clips with a completed JSON on disk ────────
+    pending, skipped_idem = [], []
+    for r in ready:
+        if _already_analysed(dest_dir, r.get("original_file", "")):
+            skipped_idem.append(r)
+        else:
+            pending.append(r)
+    if skipped_idem:
+        print(f"\n[STAGE 8] Idempotency: {len(skipped_idem)} clip(s) already analysed — skipping.")
+        for r in skipped_idem[:5]:
+            print(f"    • {Path(r['original_file']).stem}.json present")
+        if len(skipped_idem) > 5:
+            print(f"    … and {len(skipped_idem) - 5} more")
+    ready = pending
+
+    if not ready:
+        print("\n[STAGE 8] All proxies already analysed — nothing to do.")
         return []
 
     n = len(ready)
@@ -339,12 +467,38 @@ def stage_vertex(compress_results, dest_dir):
 
     results = route_analysis(proxy_files, original_map)
 
+    # ── Load anchor verdict for Stage 9 cross-check ──────────────────────────
+    anchor = _load_anchor(dest_dir)
+    if anchor:
+        print(f"  [stage9] anchor: loc={anchor.get('loc_code') or 'UNKNOWN'} "
+              f"env={anchor.get('brand_environment','Unknown')} "
+              f"conf={anchor.get('confidence',0.0)}")
+
     # ── Write JSON files + print summary ─────────────────────────────────────
     saved = []
+    kdb_hits  = 0
+    conflicts = 0
+    reviews   = 0
     for result in results:
         if result.get("error"):
             print(f"  [vertex] ERROR: {result['error']}")
             continue
+
+        # ── Stage 7: KicksDB enrichment with v2.1 ↔ legacy bridging ──────
+        sku = result.get("sku_visible") or ""
+        if _kdb_enabled and sku:
+            _kdb_bridge_in(result)
+            result = kdb_enrich(result)
+            if result.get("kdb_verified"):
+                kdb_hits += 1
+            _kdb_bridge_out(result)
+
+        # ── Stage 9: Cross-check + v2.1 metadata ─────────────────────────
+        _apply_v21_metadata_and_conflicts(result, anchor)
+        if result.get("conflict_detected"):
+            conflicts += 1
+        if result.get("needs_review"):
+            reviews += 1
 
         original_file = result.get("original_file", "")
         json_stem     = Path(original_file).stem
@@ -353,16 +507,24 @@ def stage_vertex(compress_results, dest_dir):
         with open(json_path, "w") as f:
             json.dump(result, f, indent=2)
 
-        loc_code = result.get("loc_code_confirmed") or ""
-        loc_conf = result.get("Location_Confidence") or ""
-        loc_vis  = result.get("Location_Visual") or ""
+        kdb_tag     = f"  kdb={'✓' if result.get('kdb_verified') else '✗'}" if _kdb_enabled else ""
+        hw_tag      = "  🔴hash_wall" if result.get("is_hash_wall") else ""
+        discount    = result.get("hash_wall_discount_pct")
+        hw_discount = f"(-{discount}%)" if discount else ""
+        conf_tag    = "  ⚠CONFLICT" if result.get("conflict_detected") else ""
+        rev_tag     = "  👁review"   if result.get("needs_review") and not result.get("conflict_detected") else ""
         print(f"  ✓  {json_stem}.json  "
-              f"Model={result.get('Model')}  SKU={result.get('SKU')}"
-              + (f"  loc={loc_code}({loc_conf})" if loc_code else
-                 f"  loc=unresolved" if not loc_vis else
-                 f"  loc_visual='{loc_vis}'({loc_conf})"))
+              f"sku={sku or '—'}  hint={result.get('product_hint') or '—'}"
+              + kdb_tag + hw_tag + hw_discount + conf_tag + rev_tag)
         saved.append(json_path)
 
+    if conflicts or reviews:
+        print(f"  [stage9] {conflicts} conflict(s), {reviews} flagged for review")
+
+    if _kdb_enabled:
+        stats = kdb_cache_stats()
+        print(f"  [kicksdb] {kdb_hits}/{n} enriched  "
+              f"(cache: {stats['cached']} SKUs, {stats['hits']} hits, {stats['misses']} misses)")
     print(f"  [vertex] {len(saved)}/{n} JSON file(s) written → {json_dir}")
 
     # ── Stage 10 hint ─────────────────────────────────────────────────────────
@@ -384,6 +546,137 @@ def _json_has_loc(json_path):
             return bool(json.load(fh).get("loc_code_confirmed"))
     except Exception:
         return False
+
+
+# ── Stage 9 helpers — Logic Cross-Check ───────────────────────────────────────
+
+# SKU prefix → expected brand. Used by Stage 9 to flag clips whose SKU brand
+# disagrees with the anchor scan's brand_environment. Ordered most-specific
+# first; the bare 6-char form (e.g. "BB7822", "AT5386") is ambiguous between
+# Nike and Adidas in isolation, so we lean toward Adidas because the bare
+# unhyphenated short form is far more common for Adidas in modern catalogs.
+# False positives get caught by the human reviewer; we'd rather flag than miss.
+_SKU_BRAND_PATTERNS = [
+    # (regex, brand) — first match wins
+    (r"^[A-Z]{2}\d{4}-\d{3}$",     "Nike"),     # AH8462-400, DZ4549-400 (definitive)
+    (r"^\d{6}-\d{3}$",             "Nike"),     # 555088-101, 378037-116 (definitive)
+    (r"^[A-Z]\d{5}$",              "Adidas"),   # B27871, B37520 (definitive)
+    (r"^FZ\d{4}",                  "Adidas"),   # Yeezy line
+    (r"^[A-Z]{2}\d{4}$",           "Adidas"),   # BB7822 — ambiguous; lean Adidas
+]
+
+
+def _brand_from_sku(sku: str) -> str:
+    """Infer brand from SKU format. Returns '' if no pattern matches."""
+    if not sku:
+        return ""
+    import re as _re
+    for pattern, brand in _SKU_BRAND_PATTERNS:
+        if _re.match(pattern, sku):
+            return brand
+    return ""
+
+
+def _load_anchor(dest_dir: str) -> dict:
+    """Read <dest_dir>/_anchor.json from Stage 2. Returns {} if absent."""
+    p = os.path.join(dest_dir, "_anchor.json")
+    if not os.path.isfile(p):
+        return {}
+    try:
+        with open(p) as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def _kdb_bridge_in(result: dict) -> None:
+    """
+    Stage 7 bridge — populate legacy keys that kicksdb_enricher reads,
+    using the v2.1 snake_case keys from Gemini. Mutates in place.
+    """
+    if "SKU" not in result and result.get("sku_visible"):
+        result["SKU"] = result["sku_visible"]
+    if "Is_Hash_Wall" not in result:
+        result["Is_Hash_Wall"] = bool(result.get("is_hash_wall"))
+    if "Price_Observed" not in result and result.get("price_observed"):
+        result["Price_Observed"] = result["price_observed"]
+    if "Price_Audio" not in result and result.get("price_audio"):
+        result["Price_Audio"] = result["price_audio"]
+
+
+def _kdb_bridge_out(result: dict) -> None:
+    """
+    Stage 7 bridge — promote KicksDB's authoritative legacy keys back into
+    the v2.1 schema (only when the v2.1 field is empty — Gemini's direct
+    observation, if any, wins over KicksDB's canonical for hint/colorway).
+    Cleans up the legacy aliases at the end.
+    """
+    if not result.get("product_hint") and result.get("Model"):
+        result["product_hint"] = result["Model"]
+    if not result.get("colorway_dominant") and result.get("colorway"):
+        result["colorway_dominant"] = result["colorway"]
+    # KicksDB MSRP is authoritative for price_retail (Gemini's read of the
+    # tag may be wrong; the catalog MSRP is the ground truth).
+    if result.get("Price_Retail"):
+        result["price_retail"] = result["Price_Retail"]
+    # Strip the legacy aliases — keep the JSON in v2.1 shape
+    for k in ("SKU", "Is_Hash_Wall", "Price_Observed", "Price_Audio",
+              "Price_Retail", "Model", "colorway"):
+        result.pop(k, None)
+
+
+def _apply_v21_metadata_and_conflicts(result: dict, anchor: dict) -> dict:
+    """
+    Stage 9 — Logic Cross-Check.
+
+    Mutates `result` (a Gemini-parsed dict) in place to:
+      1. Inject loc_code_anchor from the folder's anchor verdict.
+      2. Compare visible_brands + SKU-prefix-derived brand against the
+         anchor's brand_environment. Flag conflict_detected = True on
+         a real mismatch (e.g. Adidas SKU at an Nike-only anchor).
+      3. Set needs_review = True if conflict_detected OR no SKU OR
+         low-confidence anchor.
+
+    Returns the same dict (in-place + returned for chaining).
+    """
+    anchor_loc   = anchor.get("loc_code", "") or ""
+    anchor_env   = anchor.get("brand_environment", "Unknown") or "Unknown"
+    anchor_conf  = float(anchor.get("confidence", 0.0) or 0.0)
+
+    result.setdefault("loc_code_anchor", anchor_loc)
+
+    # ── Brand evidence: union of Gemini's visible_brands + SKU-inferred brand
+    visible_brands = list(result.get("visible_brands") or [])
+    sku_brand      = _brand_from_sku(result.get("sku_visible") or "")
+    if sku_brand and sku_brand not in visible_brands:
+        visible_brands.append(sku_brand)
+
+    conflict = False
+    conflict_reasons: list[str] = []
+
+    if anchor_env == "Nike-only":
+        wrong = [b for b in visible_brands if b not in ("Nike", "Jordan", "Converse")]
+        if wrong:
+            conflict = True
+            conflict_reasons.append(f"non-Nike brand {wrong} at Nike-only anchor")
+    elif anchor_env == "Adidas-focused":
+        wrong = [b for b in visible_brands if b == "Nike"]
+        if wrong:
+            conflict = True
+            conflict_reasons.append(f"Nike brand at Adidas-focused anchor")
+    # Multi-brand / Unknown: no conflict possible from brand evidence alone
+
+    result["conflict_detected"] = conflict
+    needs_review = (
+        conflict
+        or anchor_conf < 0.5
+        or not result.get("sku_visible")
+    )
+    result["needs_review"] = bool(needs_review)
+    if conflict_reasons:
+        result.setdefault("warnings", []).extend(conflict_reasons)
+
+    return result
 
 
 def stage_proxy_cleanup(dest_dir, json_paths):
@@ -476,9 +769,35 @@ def run_pipeline(inbox, root, loc_code, identifier,
         if not files:
             continue
 
+        # ── STAGE 0: GPS extraction — resolve session location from metadata ──
+        # Run on raw (pre-rename) files so we can derive the loc_code before
+        # the filename is locked in at Stage 3.
+        if fcp_mode:
+            gps_loc = stage_gps_extract(files)
+
+            # ── STAGE 2: Venue Anchor Scan ────────────────────────────────────
+            # When GPS misses (typical for archival / non-iPhone footage),
+            # sample a few clips and ask Gemini what store environment is
+            # visible. Result drives the rename's loc_code, so the venue
+            # is baked into the filename from the start.
+            anchor_loc = ""
+            if not gps_loc:
+                anchor_verdict = scan_folder_anchor(eff_inbox)
+                anchor_loc = anchor_verdict.get("loc_code", "")
+
+            # Precedence: explicit --loc > GPS > Anchor > UNKNOWN
+            effective_loc = loc_code or gps_loc or anchor_loc
+            if effective_loc:
+                source = ("manual override" if effective_loc == loc_code and loc_code
+                          else "GPS" if effective_loc == gps_loc and gps_loc
+                          else "anchor scan")
+                print(f"  Resolved loc_code → {effective_loc}  (source: {source})")
+        else:
+            effective_loc = loc_code
+
         # ── STAGE 3: Rename first — establishes permanent relational key ──────
         if fcp_mode:
-            renamed = stage_rename_fcp(eff_inbox, loc_override=loc_code or None)
+            renamed = stage_rename_fcp(eff_inbox, loc_override=effective_loc or None)
         else:
             renamed = stage_rename(eff_inbox, loc_code, identifier)
 
@@ -522,8 +841,9 @@ def run_pipeline(inbox, root, loc_code, identifier,
             continue
 
         # ── STAGE 8: Vertex AI → JSON keyed by original_file ─────────────────
-        #   JSON now includes location fields (visual + audio) in addition
-        #   to shoe fields. loc_code_confirmed is set when confidence ≥ medium.
+        #   Gemini outputs SKU + pricing + drop events.
+        #   Location is in the filename already (from Stage 0 GPS).
+        #   Stage 8b (KicksDB) appends Model, colorway, MSRP, release_date.
         json_paths = stage_vertex(compress_results, dest_dir)
 
         # ── STAGE 9: Delete proxies — they are transient assets ───────────────
@@ -532,15 +852,11 @@ def run_pipeline(inbox, root, loc_code, identifier,
         else:
             print("  No JSON written — proxies NOT deleted (safe to retry).")
 
-        # ── STAGE 10 (auto): Apply AI-confirmed location to UNKNOWN filenames ──
-        #   Runs automatically when fcp_mode was used without --loc and the
-        #   AI returned a confirmed location code (confidence high or medium).
-        if fcp_mode:
-            from fcp_namer import apply_confirmed_locations
-            confirmed = apply_confirmed_locations(dest_dir, dry_run=False)
-            if confirmed:
-                print(f"  [stage 10] {len(confirmed)} file(s) renamed with "
-                      f"confirmed location")
+        # NOTE: legacy Stage 10 (apply_confirmed_locations) removed in the v2.1
+        # rewrite. Venue resolution now happens upstream at Stage 2 (anchor
+        # scan), so loc_code is baked into the filename before rename.
+        # Gemini no longer outputs `loc_code_confirmed`, so the old loop was
+        # a dead-letter check that ran on every batch and confirmed nothing.
 
     elapsed = round(time.time() - start, 1)
     print(f"\n{'=' * 60}")
