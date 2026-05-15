@@ -42,14 +42,9 @@ import time
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 _THIS_DIR    = os.path.dirname(os.path.abspath(__file__))
-_SCRIPT_DIR  = "/Users/miniman/Documents/Sneaker_Scripts"
 
 SETTING_NAME   = "API_Ready_HEVC.compressorsetting"
-SETTING_PATH   = (
-    os.path.join(_THIS_DIR, SETTING_NAME)
-    if os.path.exists(os.path.join(_THIS_DIR, SETTING_NAME))
-    else os.path.join(_SCRIPT_DIR, SETTING_NAME)
-)
+SETTING_PATH   = os.path.join(_THIS_DIR, SETTING_NAME)
 COMPRESSOR_EXE = "/Applications/Compressor.app/Contents/MacOS/Compressor"
 PROXY_DIR_NAME = "_proxy"   # temporary subfolder inside the dated batch folder
 
@@ -187,36 +182,122 @@ def run_compression(source_folder, json_folder=None):
     return results
 
 
-def wait_for_proxies(results, timeout=3600, poll_interval=10):
+def wait_for_proxies(results, timeout=3600, poll_interval=10,
+                     hang_threshold=300, stable_threshold=30):
     """
-    Blocks until all queued proxy jobs produce their output files,
-    or until timeout seconds have elapsed.
+    Wait for queued proxy jobs with per-job hang detection.
 
-    Returns the same results list with status updated to 'ready' | 'timeout'.
+    A proxy is classified as:
+      - "ready"   : file exists, non-empty, and hasn't changed size for
+                    `stable_threshold` seconds (encoder has finished).
+      - "hung"    : no growth (no file appearance or no size change) for
+                    `hang_threshold` seconds. Compressor jobs that wedge
+                    on a problematic source clip end up here instead of
+                    blocking the whole batch until timeout.
+      - "timeout" : neither ready nor hung when the overall `timeout` elapses
+                    (rare — usually means the file is still growing slowly).
+
+    Late-completing jobs (file exists with size>0 but `stable_threshold`
+    hadn't elapsed when timeout hit) are promoted to "ready" before return,
+    so a useful batch is never abandoned just because the deadline arrived.
+    This fixes the 2019-01-11 failure mode where 16 proxies finished but
+    were silently dropped because the loop exited with them still tagged
+    "queued".
+
+    Args:
+        results          : list from run_compression()
+        timeout          : overall hard limit in seconds (default 1 hour)
+        poll_interval    : seconds between polls (default 10)
+        hang_threshold   : seconds of no growth before marking "hung" (default 300)
+        stable_threshold : seconds of no growth before marking "ready" (default 30)
+
+    Returns the same results list with status updated.
     """
     queued = [r for r in results if r["status"] == "queued"]
     if not queued:
         return results
 
-    print(f"[compress] Waiting for {len(queued)} proxy job(s)…")
+    print(f"[compress] Waiting for {len(queued)} proxy job(s)…  "
+          f"(hang threshold: {hang_threshold}s without growth)")
+
+    # Per-path progress tracking: last seen size + timestamp of last growth.
+    progress: dict = {}
+    for r in queued:
+        path = r["proxy_path"] or ""
+        try:
+            sz = os.path.getsize(path) if os.path.exists(path) else -1
+        except OSError:
+            sz = -1
+        progress[path] = {"size": sz, "since": time.time()}
+
     deadline = time.time() + timeout
 
     while time.time() < deadline:
-        pending = [r for r in queued if not os.path.exists(r["proxy_path"] or "")]
-        if not pending:
-            print("[compress] All proxies ready ✓")
-            for r in queued:
+        now = time.time()
+        unresolved = 0
+
+        for r in queued:
+            if r["status"] in ("ready", "hung"):
+                continue
+
+            path = r["proxy_path"] or ""
+            try:
+                size = os.path.getsize(path) if os.path.exists(path) else -1
+            except OSError:
+                size = -1
+
+            track = progress[path]
+            if size > track["size"]:
+                track["size"]  = size
+                track["since"] = now
+
+            # READY: file is non-empty and has been stable for stable_threshold
+            if size > 0 and (now - track["since"]) >= stable_threshold:
                 r["status"] = "ready"
+                print(f"  [READY] {os.path.basename(path)} ({size:,} bytes)")
+                continue
+
+            # HUNG: no growth for hang_threshold seconds — either the file
+            # never appeared or it stopped growing while still incomplete.
+            if (now - track["since"]) >= hang_threshold:
+                r["status"] = "hung"
+                detail = f"size={size}" if size >= 0 else "no file"
+                print(f"  [HUNG] {r['original_file']} — no progress in "
+                      f"{int(now - track['since'])}s ({detail})")
+                continue
+
+            unresolved += 1
+
+        n_ready = sum(1 for r in queued if r["status"] == "ready")
+        n_hung  = sum(1 for r in queued if r["status"] == "hung")
+
+        if unresolved == 0:
+            print(f"[compress] All jobs settled — {n_ready} ready, {n_hung} hung")
             return results
-        done = len(queued) - len(pending)
-        print(f"[compress] {done}/{len(queued)} ready — {len(pending)} pending…")
+
+        print(f"[compress] {n_ready}/{len(queued)} ready, {n_hung} hung, "
+              f"{unresolved} pending…")
         time.sleep(poll_interval)
 
-    # Timeout — mark unfinished
+    # Deadline reached. Promote anything with a non-empty file to "ready"
+    # (don't abandon completed work just because the clock ran out), and
+    # mark the rest "timeout".
+    print(f"[compress] Timeout reached — finalising remaining jobs…")
     for r in queued:
-        if not os.path.exists(r["proxy_path"] or ""):
+        if r["status"] in ("ready", "hung"):
+            continue
+        path = r["proxy_path"] or ""
+        try:
+            if os.path.exists(path) and os.path.getsize(path) > 0:
+                r["status"] = "ready"
+                print(f"  [READY-late] {os.path.basename(path)}")
+            else:
+                r["status"] = "timeout"
+                print(f"  [TIMEOUT] {r['original_file']}")
+        except OSError:
             r["status"] = "timeout"
             print(f"  [TIMEOUT] {r['original_file']}")
+
     return results
 
 
@@ -240,7 +321,7 @@ def cleanup_proxies(source_folder):
 # ── CLI test ──────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import sys
-    test_folder = sys.argv[1] if len(sys.argv) > 1 else "/Volumes/Team Bank 12/Sneaker Solo"
+    test_folder = sys.argv[1] if len(sys.argv) > 1 else "/Volumes/Team Bank 12/Sneeaker Solo"
     print(f"[compress] Dry-check: COMPRESSOR_EXE exists = {os.path.exists(COMPRESSOR_EXE)}")
     print(f"[compress] Dry-check: SETTING_PATH exists   = {os.path.exists(SETTING_PATH)}")
     print(f"[compress] Test folder: {test_folder}")
