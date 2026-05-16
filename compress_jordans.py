@@ -89,25 +89,39 @@ def _ffmpeg_exe() -> str:
 
 def _detect_video_encoder() -> str:
     """
-    Pick the best available HEVC encoder. Hardware (videotoolbox) on
-    Apple Silicon, software (libx265) elsewhere. Cached after first call.
+    Pick the fastest available H.264 / HEVC encoder. Hardware H.264
+    (h264_videotoolbox) is preferred on Apple Silicon — benchmarks on
+    M4 showed it is ~7× faster than hevc_videotoolbox for equivalent
+    file sizes (the HEVC hardware path appears badly underutilised on
+    M4, possibly falling back to software).
+
+    Cached after first call.
+
+    Override via env var PROXY_ENCODER if you really want HEVC.
     """
     global _video_encoder_cache
     if _video_encoder_cache is not None:
         return _video_encoder_cache
+
+    override = os.getenv("PROXY_ENCODER", "").strip()
     try:
         out = subprocess.check_output(
             [_ffmpeg_exe(), "-hide_banner", "-encoders"],
             stderr=subprocess.STDOUT, timeout=5,
         ).decode("utf-8", errors="replace")
-        if "hevc_videotoolbox" in out:
-            _video_encoder_cache = "hevc_videotoolbox"
-        elif "libx265" in out:
-            _video_encoder_cache = "libx265"
-        else:
-            _video_encoder_cache = "libx264"   # last-ditch fallback
     except Exception:
-        _video_encoder_cache = "libx264"
+        out = ""
+
+    candidates = (
+        [override]
+        if override else
+        ["h264_videotoolbox", "hevc_videotoolbox", "libx264", "libx265"]
+    )
+    for enc in candidates:
+        if enc and enc in out:
+            _video_encoder_cache = enc
+            return enc
+    _video_encoder_cache = "libx264"
     return _video_encoder_cache
 
 
@@ -140,11 +154,15 @@ def _encode_args(src_path: str, dst_path: str, video_encoder: str) -> list[str]:
         "-map", "0:a?",
         "-c:v", video_encoder,
     ]
-    if video_encoder == "hevc_videotoolbox":
+    # videotoolbox encoders only — allow software fallback when the
+    # hardware path can't build a compression session for a given clip.
+    if video_encoder.endswith("_videotoolbox"):
         cmd += ["-allow_sw", "1"]
+    # H.264 streams use avc1 tag; HEVC streams use hvc1.
+    tag = "hvc1" if "hevc" in video_encoder or "x265" in video_encoder else "avc1"
     cmd += [
         "-b:v", PROXY_BITRATE,
-        "-tag:v", "hvc1",
+        "-tag:v", tag,
         "-vf", f"scale=-2:{PROXY_HEIGHT}",
         "-c:a", "aac",
         "-b:a", PROXY_AUDIO_BR,
