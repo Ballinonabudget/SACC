@@ -1,4 +1,6 @@
 # Exclude media and heavy binaries
+ffmpeg
+ffmpeg.zip
 ffprobe
 ffprobe.zip
 ingestion_zone/
