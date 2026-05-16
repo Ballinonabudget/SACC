@@ -222,14 +222,32 @@ def validate_loc_code(loc_code: str) -> bool:
     return loc_code in LOCATION_DB
 
 
+_SACC_PREFIX_RE = re.compile(r"^[A-Z0-9]+-[A-Z]+_\d{6,8}_[A-Za-z0-9-]+_")
+_SACC_DATECAM_RE = re.compile(r"^\d{6,8}_[A-Za-z0-9-]+_")
+_SACC_LOC_ONLY_RE = re.compile(r"^[A-Z0-9]+-[A-Z]+_")
+
+
 def _strip_sacc_prefix(stem: str) -> str:
-    """Remove any existing SACC or partial-SACC prefix to avoid double-naming."""
-    full    = r"^([A-Z0-9]+-[A-Z]+_\d{6,8}_[A-Za-z0-9-]+_[A-Za-z0-9]+_)+"
-    partial = r"^([A-Z0-9]+-[A-Z]+-?[A-Z]*_)+"
-    clean = re.sub(full, "", stem)
-    if clean == stem:
-        clean = re.sub(partial, "", stem)
-    return clean
+    """Remove any existing SACC prefix(es) to recover the original stem.
+
+    Handles three shapes idempotently:
+      1. Single-rename : LOC-TYPE_DATE_CAMERA_ORIGSTEM → ORIGSTEM
+      2. Doubled       : LOC-TYPE_DATE_CAMERA_DATE_CAMERA_ORIGSTEM → ORIGSTEM
+                         (leftover from prior buggy rename runs)
+      3. Loc-only      : LOC-TYPE_ORIGSTEM → ORIGSTEM
+
+    Returns the cleanest form by applying strip patterns until no change.
+    """
+    prev = None
+    while prev != stem:
+        prev = stem
+        # Full SACC prefix (LOC-TYPE_DATE_CAMERA_)
+        stem = _SACC_PREFIX_RE.sub("", stem)
+        # Leftover date+camera from a doubled rename
+        stem = _SACC_DATECAM_RE.sub("", stem)
+    # Final fallback: bare LOC-TYPE_ with nothing structured after it
+    stem = _SACC_LOC_ONLY_RE.sub("", stem)
+    return stem
 
 
 # ── ffprobe helpers ────────────────────────────────────────────────────────────
@@ -331,8 +349,14 @@ class ClipMeta:
             self.date_str = datetime.now().strftime(DATE_FMT)
 
         # ── Camera timeline fallback (filename prefix + date range)
+        # Use the stripped original stem so the C/IMG_ prefix detection still
+        # works on files that have already been SACC-renamed once (otherwise
+        # the leading "NC192-NCS_…" would mask the original prefix).
         if self.cam_model is None:
-            timeline_model = _resolve_camera_from_timeline(self.filename, self.date_str)
+            original_stem = _strip_sacc_prefix(self.stem)
+            timeline_model = _resolve_camera_from_timeline(
+                original_stem + self.ext, self.date_str
+            )
             if timeline_model:
                 self.cam_model = timeline_model.replace(" ", "")
 
