@@ -51,6 +51,14 @@ BATCH_THRESHOLD     = int(os.getenv("BATCH_THRESHOLD", "50"))
 # Bump to 5-8 if you have higher quota. Set to 1 to force fully sequential.
 GEMINI_PARALLEL     = max(1, int(os.getenv("GEMINI_PARALLEL", "3")))
 
+# Predeclare backend-specific names so `from gemini_pipeline import ...`
+# succeeds regardless of which backend is active. The conditional blocks
+# below overwrite the one that applies; the other stays None and callers
+# gate on _USE_VERTEX before using it.
+_VERTEX_MODEL_NAME = None
+_GEMINI_MODEL_NAME = None
+genai              = None
+
 if _USE_VERTEX:
     try:
         import vertexai
