@@ -437,6 +437,9 @@ class SACCDB:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+_LOC_PREFIX_RE = __import__("re").compile(r"^([A-Z0-9]+)-[A-Z]+_\d{6,8}_")
+
+
 def _json_to_row(data: dict, stem: str, jpath: str, folder: str) -> dict:
     """Map a SACC JSON record to a clips table row dict."""
     orig = data.get("original_file", stem)
@@ -448,8 +451,25 @@ def _json_to_row(data: dict, stem: str, jpath: str, folder: str) -> dict:
         raw = date_match.group(1)
         shoot_date = f"20{raw}" if len(raw) == 6 else raw
 
-    # Build FCP filename if not stored
+    # loc_code resolution chain:
+    #   1. legacy keys (pre-v2.1 JSONs from Gemini's old location extraction)
+    #   2. LOC-TYPE_ prefix of the filename — primary source under v2.1 since
+    #      the rename bakes in the venue verdict (--loc / GPS / anchor) before
+    #      Stage 8, and Gemini stopped emitting loc_code in the rewrite.
+    #   3. loc_code_anchor written by Stage 9 cross-check
     loc_code = (data.get("loc_code_confirmed") or data.get("loc_code") or "")
+    loc_source = ""
+    if loc_code:
+        loc_source = "ai_confirmed" if data.get("loc_code_confirmed") else "json"
+    else:
+        m = _LOC_PREFIX_RE.match(orig)
+        if m and m.group(1) in _get_locdb():
+            loc_code = m.group(1)
+            loc_source = "filename"
+        elif data.get("loc_code_anchor"):
+            loc_code = data["loc_code_anchor"]
+            loc_source = "anchor"
+
     fcp = data.get("fcp_filename", "")
     if not fcp and orig:
         cam   = (data.get("cam_model") or "").replace(" ", "")
@@ -469,7 +489,7 @@ def _json_to_row(data: dict, stem: str, jpath: str, folder: str) -> dict:
         "cam_model":     data.get("cam_model", ""),
         "loc_code":      loc_code,
         "loc_name":      _get_locdb().get(loc_code, {}).get("name", ""),
-        "loc_source":    data.get("loc_source", "unknown"),
+        "loc_source":    data.get("loc_source") or loc_source or "unknown",
         "loc_confidence":data.get("Location_Confidence", ""),
         "loc_visual":    data.get("Location_Visual", ""),
         "loc_audio":     data.get("Location_Audio", ""),
