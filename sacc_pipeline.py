@@ -54,6 +54,7 @@ Usage (Classic mode — manual identifier):
 """
 
 import os
+import re
 import sys
 import json
 import time
@@ -239,6 +240,9 @@ def _already_analysed(dest_dir: str, original_file: str) -> bool:
 
 # ── Pipeline stages ───────────────────────────────────────────────────────────
 
+_SONY_FILENAME_RE = re.compile(r"^C\d+", re.IGNORECASE)
+
+
 def stage_gps_extract(files: list) -> str:
     """
     STAGE 0 — Extract GPS coordinates from video metadata and resolve the
@@ -253,9 +257,22 @@ def stage_gps_extract(files: list) -> str:
       • dominant_loc_code() propagates the winning location to the full
         session — covers Sony/DJI cameras that don't embed GPS.
 
+    Sony-only short-circuit: if every file matches the Sony naming pattern
+    (C0001.MP4 etc.) the batch has no GPS-bearing hardware at all; running
+    metadata extraction would be 100% wasted I/O. Skip immediately and let
+    the venue anchor stage resolve loc_code.
+
     Returns the winning loc_code string (e.g. "VLD") or "" on total miss.
     """
     if not files:
+        return ""
+
+    sony_only = all(
+        _SONY_FILENAME_RE.match(os.path.basename(p)) for p in files
+    )
+    if sony_only:
+        print(f"\n[STAGE 0] Sony-only folder ({len(files)} file(s)) — "
+              f"skipping GPS extraction (no GPS-bearing hardware).")
         return ""
 
     print(f"\n[STAGE 0] GPS extraction — {len(files)} file(s)")
@@ -427,6 +444,37 @@ def stage_vertex(compress_results, dest_dir):
 
     json_dir = os.path.join(dest_dir, "json")
     os.makedirs(json_dir, exist_ok=True)
+
+    # ── Failure stubs: every compress failure becomes an archive row.
+    # Without these, failed clips drop silently and never reach the central DB.
+    failed = [r for r in compress_results
+              if r["status"] not in ("ready", "exists") or not r.get("proxy_path")]
+    if failed:
+        print(f"\n[STAGE 8] {len(failed)} compress failure(s) — writing failed-status stubs.")
+        for fr in failed:
+            orig_file = fr.get("original_file", "") or ""
+            if not orig_file:
+                continue
+            stub_path = os.path.join(json_dir, f"{Path(orig_file).stem}.json")
+            stub = {
+                "schema_version":    "2.1",
+                "original_file":     orig_file,
+                "original_path":     fr.get("original_path", ""),
+                "status":            "failed",
+                "error":             fr.get("error") or "ffmpeg_compress_failed",
+                "shoe_visible":      False,
+                "is_archivable_as_is": True,
+                "needs_review":      False,
+                "analysed_at":       datetime.now(timezone.utc).isoformat(),
+            }
+            try:
+                with open(stub_path, "w") as f:
+                    json.dump(stub, f, indent=2)
+                print(f"  [stub] {Path(orig_file).stem}.json  status=failed  "
+                      f"error={stub['error']}")
+            except Exception as e:
+                print(f"  [stub] WARNING — could not write stub for "
+                      f"{Path(orig_file).stem}: {e}")
 
     ready = [r for r in compress_results
              if r["status"] in ("ready", "exists") and r.get("proxy_path")]
@@ -634,8 +682,11 @@ def _apply_v21_metadata_and_conflicts(result: dict, anchor: dict) -> dict:
       2. Compare visible_brands + SKU-prefix-derived brand against the
          anchor's brand_environment. Flag conflict_detected = True on
          a real mismatch (e.g. Adidas SKU at an Nike-only anchor).
-      3. Set needs_review = True if conflict_detected OR no SKU OR
-         low-confidence anchor.
+      3. Set is_archivable_as_is = True for non-shoe clips (B-roll) so
+         they archive silently without entering the review queue.
+      4. Set needs_review = True only when the clip is shoe-bearing AND
+         a real signal is missing or conflicting (conflict, no SKU, or
+         low-confidence anchor). B-roll never sets needs_review.
 
     Returns the same dict (in-place + returned for chaining).
     """
@@ -667,16 +718,58 @@ def _apply_v21_metadata_and_conflicts(result: dict, anchor: dict) -> dict:
     # Multi-brand / Unknown: no conflict possible from brand evidence alone
 
     result["conflict_detected"] = conflict
-    needs_review = (
+
+    shoe_visible = bool(result.get("shoe_visible"))
+    # B-roll / no-shoe clips archive silently — never enter review queue.
+    result["is_archivable_as_is"] = not shoe_visible
+    # Review only applies to shoe-bearing clips with a real signal gap.
+    needs_review = shoe_visible and (
         conflict
-        or anchor_conf < 0.5
         or not result.get("sku_visible")
+        or anchor_conf < 0.5
     )
     result["needs_review"] = bool(needs_review)
     if conflict_reasons:
         result.setdefault("warnings", []).extend(conflict_reasons)
 
     return result
+
+
+def stage_sync_archive(root: str, archive_db_path: str) -> dict:
+    """
+    STAGE 10 — Sync every JSON written this run into the central archive DB.
+
+    Without this stage, per-shoot JSONs sit on disk un-indexed and the
+    central DB drifts out of sync with the file tree. This is the last
+    stage of every run; only `--no-sync` disables it (testing only).
+
+    archive_db_path defaults to <root>/_archive_db/sacc.db when not
+    explicitly set. The hub folder is created on first use.
+    """
+    print(f"\n[STAGE 10] Archive sync → {archive_db_path}")
+    try:
+        os.makedirs(os.path.dirname(archive_db_path), exist_ok=True)
+        from db import SACCDB
+        db = SACCDB(archive_db_path)
+        summary = db.sync_archive_recursive(root)
+    except Exception as e:
+        print(f"  [sync] ERROR — archive sync failed: {e}")
+        return {"error": str(e)}
+
+    if summary.get("error"):
+        print(f"  [sync] ERROR — {summary['error']}")
+        return summary
+
+    print(f"  [sync] folders_scanned={summary.get('folders_scanned', 0)}  "
+          f"upserted={summary.get('upserted', 0)}  "
+          f"drops={summary.get('drop_events', 0)}  "
+          f"prices={summary.get('price_observations', 0)}")
+    errs = summary.get("errors") or []
+    if errs:
+        print(f"  [sync] {len(errs)} per-file error(s) — first 3:")
+        for e in errs[:3]:
+            print(f"    • {e}")
+    return summary
 
 
 def stage_proxy_cleanup(dest_dir, json_paths):
@@ -705,7 +798,8 @@ def stage_proxy_cleanup(dest_dir, json_paths):
 # ── Main orchestrator ─────────────────────────────────────────────────────────
 
 def run_pipeline(inbox, root, loc_code, identifier,
-                 dry_run=False, fcp_mode=False, no_move=False):
+                 dry_run=False, fcp_mode=False, no_move=False,
+                 no_sync=False, archive_db_path: str = ""):
     """
     Full SACC pipeline — enforces rename-first, proxy-same-name, proxy-delete.
 
@@ -721,6 +815,11 @@ def run_pipeline(inbox, root, loc_code, identifier,
         no_move    : Skip Stage 4 — originals renamed in place, _proxy/ and json/
                      written alongside them. Use for FCP library sources where
                      relocating originals would break media links.
+        no_sync    : Skip the final archive-sync stage. Testing flag only —
+                     default is OFF so the central DB stays in lock-step
+                     with the file tree.
+        archive_db_path : Override path to the central archive SQLite.
+                     Defaults to <root>/_archive_db/sacc.db.
     """
     start = time.time()
     mode_label = "FCP (GPS auto-detect)" if fcp_mode else "Classic (manual --loc/--id)"
@@ -858,6 +957,13 @@ def run_pipeline(inbox, root, loc_code, identifier,
         # Gemini no longer outputs `loc_code_confirmed`, so the old loop was
         # a dead-letter check that ran on every batch and confirmed nothing.
 
+    # ── STAGE 10: Sync everything into the central archive DB ─────────────────
+    if not no_sync:
+        resolved_db = archive_db_path or os.path.join(root, "_archive_db", "sacc.db")
+        stage_sync_archive(root, resolved_db)
+    else:
+        print("\n[STAGE 10] Archive sync skipped (--no-sync).")
+
     elapsed = round(time.time() - start, 1)
     print(f"\n{'=' * 60}")
     print(f"SACC Pipeline — Complete in {elapsed}s")
@@ -900,6 +1006,12 @@ Examples:
                         help="Skip Stage 4 — originals renamed in place, "
                              "_proxy/ and json/ written alongside them. "
                              "Use for FCP library sources.")
+    parser.add_argument("--no-sync",  action="store_true",
+                        help="Skip Stage 10 — do NOT sync run output into "
+                             "the central archive DB. Testing only.")
+    parser.add_argument("--archive-db", default="",
+                        help="Override path to the central archive SQLite. "
+                             "Defaults to <root>/_archive_db/sacc.db.")
     args = parser.parse_args()
 
     # Validation
@@ -914,11 +1026,13 @@ Examples:
             sys.exit(1)
 
     run_pipeline(
-        inbox      = args.inbox,
-        root       = args.root,
-        loc_code   = args.loc,
-        identifier = args.id,
-        dry_run    = args.dry_run,
-        fcp_mode   = args.fcp,
-        no_move    = args.no_move,
+        inbox            = args.inbox,
+        root             = args.root,
+        loc_code         = args.loc,
+        identifier       = args.id,
+        dry_run          = args.dry_run,
+        fcp_mode         = args.fcp,
+        no_move          = args.no_move,
+        no_sync          = args.no_sync,
+        archive_db_path  = args.archive_db,
     )

@@ -408,6 +408,10 @@ def _parse_response(raw_text):
         return canon if canon in allowed else default
 
     return {
+        # Schema tag — required on every artifact so future migrations can
+        # distinguish v2.1 outputs from v1 PascalCase JSONs.
+        "schema_version":    "2.1",
+
         # Classification
         "shoe_visible":      _bool(data.get("shoe_visible")  or data.get("Shoe_Visible")),
         "venue_visible":     _bool(data.get("venue_visible") or data.get("Venue_Visible")),

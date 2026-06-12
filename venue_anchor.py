@@ -266,26 +266,39 @@ def _parse_anchor_response(raw: str) -> dict:
 def _signage_to_loc_code(signage: list[str]) -> str:
     """
     Map free-text store-signage strings to a SACC loc_code via LOCATION_DB
-    name matching. Returns "" if no match.
+    `aliases`. Returns "" if no match.
 
-    Match strategy: case-insensitive substring on the LOCATION_DB name and
-    on the loc_code itself. First match wins.
+    Match strategy: case-insensitive substring of each alias inside the
+    joined signage text. Candidates are ranked by:
+      1. uniqueness (an alias mapping to exactly one loc_code wins over
+         a shared alias like "Nike Clearance" that maps to several)
+      2. alias length (longest first — most specific wording wins)
+    Loc_code itself is also a last-resort candidate (e.g. "NC192"
+    stencilled on a wall).
     """
     if not signage:
         return ""
     sig_text = " | ".join(s.lower() for s in signage)
-    # First try direct name substring matches
+
+    # Build (alias_text, loc_code) pairs, then compute uniqueness over the
+    # alias_text and sort: unique aliases first, then longest first.
+    raw: list[tuple[str, str]] = []
     for code, info in LOCATION_DB.items():
-        name = info.get("name", "").lower()
-        if name and name in sig_text:
-            return code
-        # Try without parenthetical suffix
-        bare = re.sub(r"\s*\(.*\)\s*$", "", name).strip()
-        if bare and bare in sig_text:
-            return code
-    # Then loc_code match (rare but possible — "NC192" appearing in signage text)
-    for code in LOCATION_DB:
-        if code.lower() in sig_text:
+        for alias in info.get("aliases", []) or []:
+            a = alias.strip().lower()
+            if a:
+                raw.append((a, code))
+        # Loc_code itself as a fallback (e.g. "NC192" visible on signage)
+        raw.append((code.lower(), code))
+
+    alias_counts: dict[str, int] = {}
+    for alias, _ in raw:
+        alias_counts[alias] = alias_counts.get(alias, 0) + 1
+
+    # Sort key: unique first (count==1 → 0, else 1), then longest first.
+    raw.sort(key=lambda t: (0 if alias_counts[t[0]] == 1 else 1, -len(t[0])))
+    for alias, code in raw:
+        if alias in sig_text:
             return code
     return ""
 
