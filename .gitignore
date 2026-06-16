@@ -26,3 +26,7 @@ jordan1_og_stockx.json
 Compressed_Files/
 Processed_RAW/
 sacc_app.db
+
+# YOLO-World weights — auto-downloaded by ultralytics, not source
+yolov8s-worldv2.pt
+weights/
