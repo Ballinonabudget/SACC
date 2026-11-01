@@ -22,10 +22,12 @@ as its stem, making it the permanent relational key back to the hi-res master:
 
 Environment (.env)
 ------------------
-  GEMINI_API_KEY     → Gemini API (Phase 1/2 fallback)
+  SACC_REMOTE_API_ENABLED → explicit safety switch; must be true to call APIs
+  GEMINI_API_KEY     → SACC-owned Gemini API key (Phase 1/2 fallback)
+  GEMINI_MODEL       → gemini-3.8-flash (default)
   VERTEX_PROJECT_ID  → Vertex AI project (required for batch mode)
   VERTEX_LOCATION    → us-central1 (default)
-  VERTEX_MODEL       → gemini-2.5-pro (default)
+  VERTEX_MODEL       → gemini-3.8-flash (default)
   GCS_BUCKET         → GCS bucket name for batch I/O (required for batch mode)
 """
 
@@ -42,6 +44,9 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 _vertex_project  = os.getenv("VERTEX_PROJECT_ID")
 _vertex_location = os.getenv("VERTEX_LOCATION", "us-central1")
 _gemini_key      = os.getenv("GEMINI_API_KEY")
+_REMOTE_API_ENABLED = os.getenv("SACC_REMOTE_API_ENABLED", "false").strip().lower() in {
+    "1", "true", "yes", "on",
+}
 
 _USE_VERTEX  = bool(_vertex_project)
 _GCS_BUCKET  = os.getenv("GCS_BUCKET", "")
@@ -55,36 +60,47 @@ GEMINI_PARALLEL     = max(1, int(os.getenv("GEMINI_PARALLEL", "3")))
 # succeeds regardless of which backend is active. The conditional blocks
 # below overwrite the one that applies; the other stays None and callers
 # gate on _USE_VERTEX before using it.
-_VERTEX_MODEL_NAME = None
-_GEMINI_MODEL_NAME = None
-genai              = None
+def _bare_model_id(value: str) -> str:
+    """Normalize old ``models/<id>`` configuration to the current SDK form."""
+    return value.removeprefix("models/")
 
-if _USE_VERTEX:
-    try:
-        import vertexai
-        from vertexai.generative_models import GenerativeModel, Part
-        vertexai.init(project=_vertex_project, location=_vertex_location)
-        _VERTEX_MODEL_NAME = os.getenv("VERTEX_MODEL", "gemini-2.5-pro")
-        print(f"[gemini] Using Vertex AI — project={_vertex_project} "
-              f"location={_vertex_location} model={_VERTEX_MODEL_NAME}")
-    except ImportError:
-        print("[gemini] WARNING — vertexai SDK not installed. "
-              "Falling back to google.generativeai.")
-        _USE_VERTEX = False
 
-if not _USE_VERTEX:
-    try:
-        import google.generativeai as genai
-        if _gemini_key:
-            genai.configure(api_key=_gemini_key)
-        # GEMINI_MODEL accepts either bare ID or "models/<id>" form.
-        _gemini_model_env = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
-        _GEMINI_MODEL_NAME = (
-            _gemini_model_env if _gemini_model_env.startswith("models/")
-            else f"models/{_gemini_model_env}"
+_VERTEX_MODEL_NAME = _bare_model_id(os.getenv("VERTEX_MODEL", "gemini-3.8-flash"))
+_GEMINI_MODEL_NAME = _bare_model_id(
+    os.getenv("GEMINI_MODEL")
+    or os.getenv("SACC_GEMINI_MODEL")
+    or "gemini-3.8-flash"
+)
+
+try:
+    from google import genai
+    from google.genai import types as genai_types
+except ImportError:
+    genai = None
+    genai_types = None
+
+
+def _new_client():
+    """Create a supported Google Gen AI SDK client without making a request."""
+    if not _REMOTE_API_ENABLED:
+        raise RuntimeError(
+            "Remote API access is locked. Verify the SACC-owned credential, then set "
+            "SACC_REMOTE_API_ENABLED=true in .env."
         )
-    except ImportError:
-        genai = None
+    if genai is None or genai_types is None:
+        raise RuntimeError(
+            "google-genai is not installed; install requirements-poc.txt"
+        )
+    if _USE_VERTEX:
+        return genai.Client(
+            vertexai=True,
+            project=_vertex_project,
+            location=_vertex_location,
+            http_options=genai_types.HttpOptions(api_version="v1"),
+        )
+    if not _gemini_key:
+        raise RuntimeError("GEMINI_API_KEY is not configured in .env")
+    return genai.Client(api_key=_gemini_key)
 
 # ── Prompt (shared across both backends) ─────────────────────────────────────
 #
@@ -232,6 +248,13 @@ def analyze_sneaker_video(proxy_path, original_file=None, original_path=None):
         "proxy_deleted":  False,    # pipeline sets this True after cleanup_proxies()
     }
 
+    if not _REMOTE_API_ENABLED:
+        err = (
+            "Remote API access is locked. Verify the SACC-owned credential, then set "
+            "SACC_REMOTE_API_ENABLED=true in .env."
+        )
+        print(f"[gemini] BLOCKED — {err}")
+        return {**base_result, "error": err}
     if _USE_VERTEX:
         return _analyze_vertex(proxy_path, base_result)
     elif genai is not None and _gemini_key:
@@ -244,27 +267,28 @@ def analyze_sneaker_video(proxy_path, original_file=None, original_path=None):
 
 
 def _analyze_vertex(proxy_path, base_result):
-    """Vertex AI backend."""
+    """Vertex backend through the supported Google Gen AI SDK."""
     try:
-        from vertexai.generative_models import GenerativeModel, Part
-        import vertexai.generative_models as gm
-
         print(f"  [vertex] Uploading proxy: {os.path.basename(proxy_path)}")
 
         with open(proxy_path, "rb") as f:
             video_bytes = f.read()
 
-        video_part = Part.from_data(data=video_bytes, mime_type="video/mp4")
+        video_part = genai_types.Part.from_bytes(data=video_bytes, mime_type="video/mp4")
 
-        def _call():
-            model    = GenerativeModel(_VERTEX_MODEL_NAME)
-            response = model.generate_content(
-                [video_part, _ANALYSIS_PROMPT],
-                generation_config={"response_mime_type": "application/json"},
-            )
-            return response.text
+        with _new_client() as client:
+            def _call():
+                response = client.models.generate_content(
+                    model=_VERTEX_MODEL_NAME,
+                    contents=[video_part, _ANALYSIS_PROMPT],
+                    config=genai_types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        http_options=genai_types.HttpOptions(timeout=90_000),
+                    ),
+                )
+                return response.text
 
-        raw = _retry(_call)
+            raw = _retry(_call)
         parsed = _parse_response(raw)
         return {**base_result, **parsed,
                 "analysed_at": _utcnow(), "proxy_deleted": False}
@@ -275,39 +299,45 @@ def _analyze_vertex(proxy_path, base_result):
 
 
 def _analyze_gemini(proxy_path, base_result):
-    """Gemini API (google.generativeai) backend — current Phase 1/2."""
+    """Gemini Developer API backend through the supported Google Gen AI SDK."""
     try:
         print(f"  [gemini] Uploading proxy: {os.path.basename(proxy_path)}")
 
-        def _upload():
-            vf = genai.upload_file(path=proxy_path)
-            for _ in range(60):
-                if vf.state.name == "ACTIVE":
-                    break
-                if vf.state.name == "FAILED":
-                    raise ValueError(f"Gemini file processing failed: {proxy_path}")
-                time.sleep(2)
-                vf = genai.get_file(vf.name)
-            return vf
+        with _new_client() as client:
+            def _upload():
+                vf = client.files.upload(file=proxy_path)
+                for _ in range(60):
+                    state = getattr(getattr(vf, "state", None), "name", "")
+                    if state == "ACTIVE":
+                        return vf
+                    if state == "FAILED":
+                        raise ValueError(f"Gemini file processing failed: {proxy_path}")
+                    time.sleep(2)
+                    vf = client.files.get(name=vf.name)
+                raise TimeoutError(f"Gemini file processing timed out: {proxy_path}")
 
-        video_file = _retry(_upload)
+            video_file = _retry(_upload)
 
-        def _infer():
-            model    = genai.GenerativeModel(_GEMINI_MODEL_NAME)
-            response = model.generate_content(
-                [video_file, _ANALYSIS_PROMPT],
-                request_options={"timeout": 90},
-            )
-            return response.text
+            def _infer():
+                response = client.models.generate_content(
+                    model=_GEMINI_MODEL_NAME,
+                    contents=[video_file, _ANALYSIS_PROMPT],
+                    config=genai_types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        http_options=genai_types.HttpOptions(timeout=90_000),
+                    ),
+                )
+                return response.text
 
-        raw    = _retry(_infer)
+            try:
+                raw = _retry(_infer)
+            finally:
+                try:
+                    client.files.delete(name=video_file.name)
+                except Exception:
+                    pass  # non-fatal
+
         parsed = _parse_response(raw)
-
-        # Clean up the uploaded file from Gemini storage
-        try:
-            genai.delete_file(video_file.name)
-        except Exception:
-            pass   # non-fatal
 
         return {**base_result, **parsed,
                 "analysed_at": _utcnow(), "proxy_deleted": False}
@@ -510,8 +540,8 @@ def _standard_batch(proxy_files: list, original_map: dict) -> list:
     Concurrency = GEMINI_PARALLEL (env, default 3). Output preserves input
     order so downstream index-based lookups stay valid.
 
-    Threading instead of asyncio: the google.generativeai / vertexai
-    clients are sync; threading lets us parallelise without rewriting
+    Threading instead of asyncio: the Google Gen AI client is synchronous;
+    threading lets us parallelise without rewriting
     analyze_sneaker_video. Calls are network-I/O-bound so the GIL is
     released during waits.
     """
@@ -622,7 +652,7 @@ def _vertex_batch(proxy_files: list, original_map: dict) -> list:
     # ── Step 3: Submit job ────────────────────────────────────────────────────
     model_name = (f"projects/{_vertex_project}/locations/{_vertex_location}"
                   f"/publishers/google/models/"
-                  f"{os.getenv('VERTEX_MODEL', 'gemini-2.5-pro')}")
+                  f"{os.getenv('VERTEX_MODEL', 'gemini-3.8-flash')}")
 
     aip.init(project=_vertex_project, location=_vertex_location)
     job = aip.BatchPredictionJob.create(
@@ -697,6 +727,8 @@ if __name__ == "__main__":
     can_batch = bool(_GCS_BUCKET and _vertex_project)
     print("[gemini] Pipeline initialised.")
     print(f"  Backend        : {'Vertex AI' if _USE_VERTEX else 'Gemini API'}")
+    print(f"  Remote API     : {'ENABLED' if _REMOTE_API_ENABLED else 'LOCKED'}")
+    print(f"  Model          : {_VERTEX_MODEL_NAME if _USE_VERTEX else _GEMINI_MODEL_NAME}")
     print(f"  Vertex project : {_vertex_project or '(not set)'}")
     print(f"  Gemini key     : {'set' if _gemini_key else '(not set)'}")
     print(f"  GCS bucket     : {_GCS_BUCKET or '(not set — batch mode disabled)'}")

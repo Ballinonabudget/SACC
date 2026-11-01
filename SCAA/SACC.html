@@ -70,8 +70,10 @@
 <script type="text/babel" src="sacc/gallery-view.jsx?v=4"></script>
 <script type="text/babel" src="sacc/timeline-view.jsx?v=4"></script>
 <script type="text/babel" src="sacc/import-view.jsx?v=4"></script>
-<script type="text/babel" src="sacc/search-view.jsx?v=8"></script>
-<script type="text/babel" src="sacc/dashboard-view.jsx?v=4"></script>
+<script type="text/babel" src="sacc/search-view.jsx?v=12"></script>
+<script type="text/babel" src="sacc/poc-search-view.jsx?v=1"></script>
+<script type="text/babel" src="sacc/library-view.jsx?v=1"></script>
+<script type="text/babel" src="sacc/dashboard-view.jsx?v=6"></script>
 <script type="text/babel" src="sacc/renamer-view.jsx?v=4"></script>
 <script type="text/babel" src="sacc/verify-view.jsx?v=4"></script>
 <script type="text/babel" src="sacc/error-log-view.jsx?v=1"></script>
@@ -143,15 +145,16 @@ const ACCENT_MAP = {
 const VIEW_LABELS = {
   gallery: 'Archive', timeline: 'Timeline', import: 'Import', search: 'Search',
   dashboard: 'Dashboard', renamer: 'Renamer', verify: 'Verify',
-  errorlog: 'Errors', docs: 'Docs',
+  errorlog: 'Errors', docs: 'Docs', pocsearch: 'Multi-Modal', library: 'Library',
 };
 
 function App() {
   const P = SACC_PALETTE;
   const saved = (() => { try { return JSON.parse(localStorage.getItem('sacc_v2') || '{}'); } catch { return {}; } })();
 
-  const [activeFolder, setActiveFolder] = useState('');
-  const [view, setView]           = useState(saved.view || TWEAK_DEFAULTS.defaultView);
+  const [activeFolder, setActiveFolder] = useState(() => localStorage.getItem('sacc_activeFolder') || '');
+  // Don't restore 'search' from localStorage — it's a transient view (no collection context survives reload)
+  const [view, setView]           = useState((saved.view && saved.view !== 'search') ? saved.view : TWEAK_DEFAULTS.defaultView);
   const [mode, setMode]           = useState(saved.mode || TWEAK_DEFAULTS.mode);
   const [accent, setAccent]       = useState(saved.accent || TWEAK_DEFAULTS.accent);
   const [selectedId, setSelectedId] = useState(saved.selectedId || null);
@@ -207,6 +210,12 @@ function App() {
   useEffect(() => {
     localStorage.setItem('sacc_v2', JSON.stringify({ view, mode, accent, selectedId }));
   }, [view, mode, accent, selectedId]);
+
+  // Persist active folder so search video preview survives page reload
+  useEffect(() => {
+    if (activeFolder) localStorage.setItem('sacc_activeFolder', activeFolder);
+    else localStorage.removeItem('sacc_activeFolder');
+  }, [activeFolder]);
 
   // Patch accent into SACC_PALETTE at runtime
   const accentColor = ACCENT_MAP[accent] || ACCENT_MAP.amber;
@@ -341,11 +350,15 @@ function App() {
         { id: 'gallery',   icon: '⊞', label: 'Archive' },
         { id: 'timeline',  icon: '☰', label: 'Timeline' },
         { id: 'search',    icon: '⌕', label: 'Search' },
+        { id: 'pocsearch', icon: '◫', label: 'Multi-Modal' },
+        { id: 'library',   icon: '▤', label: 'Library' },
       ]
     : [
         { id: 'gallery',   icon: '⊞', label: 'Archive' },
         { id: 'timeline',  icon: '☰', label: 'Timeline' },
         { id: 'search',    icon: '⌕', label: 'Search' },
+        { id: 'pocsearch', icon: '◫', label: 'Multi-Modal' },
+        { id: 'library',   icon: '▤', label: 'Library' },
         { id: 'dashboard', icon: '◈', label: 'Dashboard' },
         { id: 'renamer',   icon: '✎', label: 'Renamer' },
         { id: 'verify',    icon: '✓', label: 'Verify' },
@@ -503,6 +516,12 @@ function App() {
               externalQuery={collectionQuery}
             />
           )}
+          {view === 'pocsearch' && (
+            <PocSearchView mode={mode} accent={accentColor} />
+          )}
+          {view === 'library' && (
+            <LibraryView mode={mode} accent={accentColor} />
+          )}
           {view === 'errorlog' && (
             <ErrorLogView mode={mode} accent={accentColor} />
           )}
@@ -521,7 +540,7 @@ function App() {
         </div>
 
         {/* Right detail panel — hidden in import */}
-        {view !== 'import' && (
+        {!['import', 'pocsearch', 'library'].includes(view) && (
           <DetailPanel sneaker={selectedSneaker} mode={mode}
             accent={accentColor}
             onClose={() => setSelectedId(null)} />
@@ -529,7 +548,7 @@ function App() {
       </div>
 
       {/* ← → nav hint bar (bottom) */}
-      {selectedSneaker && view !== 'import' && (
+      {selectedSneaker && !['import', 'library'].includes(view) && (
         <div style={{ height:26, background:'#1e1e20', borderTop:'1px solid rgba(255,255,255,0.06)',
           display:'flex', alignItems:'center', justifyContent:'center', gap:16 }}>
           <span style={{ fontSize:10, color:'rgba(255,255,255,0.3)', fontFamily:'-apple-system, sans-serif',

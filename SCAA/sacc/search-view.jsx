@@ -55,8 +55,8 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
     [query, activeFolder, pipelineMode, orientation, shotType, yearFilter, sessionFilter]);
 
   // Fire API search whenever query, filters, or activeFolder changes (debounced 300ms)
+  // No activeFolder ⇒ falls back to global archive (server reads archive_db_folder from user_settings)
   React.useEffect(() => {
-    if (!activeFolder) { setLiveResults(null); return; }
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
       setLiveLoading(true); setLiveError('');
@@ -108,8 +108,10 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
           return;
         }
 
-        // Legacy SACC DB search
-        const params = new URLSearchParams({ path: activeFolder, q: query, limit: PAGE_SIZE, offset: page * PAGE_SIZE });
+        // SACC DB search — global by default, scoped when activeFolder is set
+        const params = new URLSearchParams({ q: query, limit: PAGE_SIZE, offset: page * PAGE_SIZE });
+        if (activeFolder) params.set('path', activeFolder);
+        if (orientation !== 'all') params.set('orientation', orientation);
         res  = await fetch(`${API_BASE}/api/db/search?${params}`);
         data = await res.json();
         if (data.error) { setLiveError(data.error); setLiveResults([]); }
@@ -119,7 +121,7 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
             // Parse extension from original_file to avoid double-extension in FCP builder
             const origWithExt = r.original_file || r.stem;
             const extMatch    = origWithExt.match(/(\.[^.]+)$/);
-            const ext         = extMatch ? extMatch[1].toLowerCase() : '.mp4';
+            const ext         = extMatch ? extMatch[1] : '.mp4';
             const origFile    = extMatch ? origWithExt.slice(0, -extMatch[1].length) : origWithExt;
             return {
               id:             r.stem,
@@ -165,9 +167,9 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
 
   React.useEffect(() => { setTimeout(() => inputRef.current?.focus(), 80); }, []);
 
-  // Sync collection query when a collection is clicked from the sidebar
+  // Sync collection query when a collection is clicked or deselected from the sidebar
   React.useEffect(() => {
-    if (externalQuery != null && externalQuery !== '') setQuery(externalQuery);
+    setQuery(externalQuery || '');
   }, [externalQuery]);
 
   // ── Location confidence helpers ───────────────────────────────────────────────
@@ -413,6 +415,13 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
 
           <span style={{ fontSize:10, color:P.muted, fontFamily:'Space Mono, monospace', marginRight:2 }}>SORT</span>
           {[['release','Date'],['price','Price'],['name','Name'],['status','Status']].map(([k,l]) => sortBtn(k,l))}
+          <span style={{ width:1, height:16, background:P.border, margin:'0 4px' }} />
+
+          {/* Orientation filter — always visible, applies to global / folder / pipeline searches */}
+          <span style={{ fontSize:10, color:P.muted, fontFamily:'Space Mono, monospace', marginRight:2 }}>ORIENT</span>
+          {[['all','All'],['horizontal','↔ Landscape'],['vertical','↕ Vertical']].map(([v,l]) => (
+            <span key={v} onClick={() => setOrientation(v)} style={chipStyle(orientation === v)}>{l}</span>
+          ))}
         </div>
 
         {/* Pipeline filter row */}
@@ -425,11 +434,6 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
             ⌬ Pipeline
           </span>
           {pipelineMode && (<>
-            <span style={{ width:1, height:16, background:P.border, margin:'0 2px' }} />
-            <span style={{ fontSize:10, color:P.muted, fontFamily:'Space Mono, monospace', marginRight:2 }}>ORIENT</span>
-            {[['all','All'],['horizontal','↔ H'],['vertical','↕ V']].map(([v,l]) => (
-              <span key={v} onClick={() => setOrientation(v)} style={chipStyle(orientation === v)}>{l}</span>
-            ))}
             <span style={{ width:1, height:16, background:P.border, margin:'0 2px' }} />
             <span style={{ fontSize:10, color:P.muted, fontFamily:'Space Mono, monospace', marginRight:2 }}>SHOT</span>
             {[['all','All'],['broll','B-roll'],['vlog','Vlog']].map(([v,l]) => (
@@ -731,53 +735,80 @@ function SearchView({ sneakers, whitelist, locations, mode, accent, activeFolder
                                 <div style={{ display:'flex', gap:16, flexWrap:'wrap' }}>
 
                                   {/* Video Preview */}
-                                  {s.folderPath && s.origFile && (
-                                    <div style={{ flex:'0 0 auto', width:224 }}>
-                                      <div style={{ display:'flex', alignItems:'center',
-                                        justifyContent:'space-between', marginBottom:4 }}>
-                                        <span style={{ fontSize:9, color:P.muted,
-                                          fontFamily:'Space Mono, monospace',
-                                          letterSpacing:'0.06em' }}>PREVIEW</span>
-                                        <button
+                                  <div style={{ flex:'0 0 auto', width:224 }}>
+                                    {s.folderPath && s.origFile ? (
+                                      <>
+                                        <div style={{ display:'flex', alignItems:'center',
+                                          justifyContent:'space-between', marginBottom:4 }}>
+                                          <span style={{ fontSize:9, color:P.muted,
+                                            fontFamily:'Space Mono, monospace',
+                                            letterSpacing:'0.06em' }}>PREVIEW</span>
+                                          <button
+                                            onClick={() => fetch(`${API_BASE}/api/reveal`, {
+                                              method:'POST',
+                                              headers:{'Content-Type':'application/json'},
+                                              body: JSON.stringify({ path: s.folderPath, file: s.origFile + s.ext })
+                                            })}
+                                            title="Reveal in Finder — then drag to FCP/Premiere"
+                                            style={{ fontSize:9, padding:'2px 7px', borderRadius:4,
+                                              border:`1px solid ${P.border}`, background:P.bg,
+                                              color:P.textSub, cursor:'pointer',
+                                              fontFamily:'-apple-system, sans-serif' }}>
+                                            ⌘ Reveal
+                                          </button>
+                                        </div>
+                                        <video
+                                          key={s.id}
+                                          src={`${API_BASE}/api/video?path=${encodeURIComponent(s.folderPath)}&file=${encodeURIComponent(s.origFile + s.ext)}`}
+                                          controls
+                                          preload="metadata"
+                                          style={{ width:224, borderRadius:6,
+                                            border:`1px solid ${P.border}`,
+                                            background:'#000', display:'block' }}
+                                          onError={e => {
+                                            e.currentTarget.style.display = 'none';
+                                            e.currentTarget.nextSibling && (e.currentTarget.nextSibling.style.display = 'flex');
+                                          }}
+                                        />
+                                        <div style={{ display:'none', width:224, height:126,
+                                          borderRadius:6, border:`1px solid ${P.border}`,
+                                          background:'#111', alignItems:'center', justifyContent:'center',
+                                          fontSize:10, color:P.muted,
+                                          fontFamily:'Space Mono, monospace', flexDirection:'column', gap:4 }}>
+                                          <span style={{ fontSize:18 }}>✕</span>
+                                          <span>File not found on disk</span>
+                                          <span style={{ fontSize:9, opacity:.6 }}>{s.origFile + s.ext}</span>
+                                        </div>
+                                        {/* Path chip — clicking reveals the source video file in Finder */}
+                                        <div
                                           onClick={() => fetch(`${API_BASE}/api/reveal`, {
                                             method:'POST',
                                             headers:{'Content-Type':'application/json'},
                                             body: JSON.stringify({ path: s.folderPath, file: s.origFile + s.ext })
                                           })}
-                                          title="Reveal in Finder — then drag to FCP/Premiere"
-                                          style={{ fontSize:9, padding:'2px 7px', borderRadius:4,
-                                            border:`1px solid ${P.border}`, background:P.bg,
-                                            color:P.textSub, cursor:'pointer',
-                                            fontFamily:'-apple-system, sans-serif' }}>
-                                          ⌘ Reveal
-                                        </button>
+                                          title={s.folderPath}
+                                          style={{ marginTop:5, fontSize:9, color:P.muted,
+                                            fontFamily:'Space Mono, monospace',
+                                            overflow:'hidden', textOverflow:'ellipsis',
+                                            whiteSpace:'nowrap', cursor:'pointer',
+                                            padding:'3px 6px', borderRadius:4,
+                                            border:`1px solid ${P.border}`, background:P.bg }}>
+                                          📁 {s.folderPath.split('/').slice(-2).join('/')}
+                                        </div>
+                                      </>
+                                    ) : (
+                                      <div style={{ width:224, height:126, borderRadius:6,
+                                        border:`1px dashed ${P.border}`, background:P.bg,
+                                        display:'flex', flexDirection:'column',
+                                        alignItems:'center', justifyContent:'center',
+                                        gap:5, fontSize:10, color:P.muted,
+                                        fontFamily:'Space Mono, monospace' }}>
+                                        <span style={{ fontSize:18, opacity:.4 }}>▶</span>
+                                        <span>No folder selected</span>
+                                        <span style={{ fontSize:9, opacity:.6 }}>Set path in Dashboard</span>
                                       </div>
-                                      <video
-                                        src={`${API_BASE}/api/video?path=${encodeURIComponent(s.folderPath)}&file=${encodeURIComponent(s.origFile + s.ext)}`}
-                                        controls
-                                        preload="metadata"
-                                        style={{ width:224, borderRadius:6,
-                                          border:`1px solid ${P.border}`,
-                                          background:'#000', display:'block' }}
-                                      />
-                                      {/* Path chip — shows folder, click to reveal */}
-                                      <div
-                                        onClick={() => fetch(`${API_BASE}/api/reveal`, {
-                                          method:'POST',
-                                          headers:{'Content-Type':'application/json'},
-                                          body: JSON.stringify({ path: s.folderPath })
-                                        })}
-                                        title={s.folderPath}
-                                        style={{ marginTop:5, fontSize:9, color:P.muted,
-                                          fontFamily:'Space Mono, monospace',
-                                          overflow:'hidden', textOverflow:'ellipsis',
-                                          whiteSpace:'nowrap', cursor:'pointer',
-                                          padding:'3px 6px', borderRadius:4,
-                                          border:`1px solid ${P.border}`, background:P.bg }}>
-                                        📁 {s.folderPath.split('/').slice(-2).join('/')}
-                                      </div>
-                                    </div>
-                                  )}
+                                    )}
+                                  </div>
 
                                   {/* FCP Filename */}
                                   <div style={{ flex:'2 1 260px' }}>

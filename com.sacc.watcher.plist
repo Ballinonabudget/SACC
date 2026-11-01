@@ -5,7 +5,7 @@
   com.sacc.watcher.plist — launchd agent for SACC folder-watch daemon
 
   Install:
-    cp /Users/miniman/SACC/com.sacc.watcher.plist ~/Library/LaunchAgents/
+    cp /Users/daplug/Documents/SACC/com.sacc.watcher.plist ~/Library/LaunchAgents/
     launchctl load ~/Library/LaunchAgents/com.sacc.watcher.plist
 
   Uninstall:
@@ -25,7 +25,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
-        <string>/Users/miniman/SACC/sacc_watcher.py</string>
+        <string>/Users/daplug/Documents/SACC/sacc_watcher.py</string>
         <string>--inbox</string>
         <string>/Volumes/Team Bank 12/SACC/Inbox</string>
         <string>--root</string>
@@ -50,9 +50,9 @@
 
     <!-- Logs -->
     <key>StandardOutPath</key>
-    <string>/Users/miniman/SACC/sacc_launchd.log</string>
+    <string>/Users/daplug/Documents/SACC/sacc_launchd.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/miniman/SACC/sacc_launchd.err</string>
+    <string>/Users/daplug/Documents/SACC/sacc_launchd.err</string>
 
     <!-- Environment -->
     <key>EnvironmentVariables</key>

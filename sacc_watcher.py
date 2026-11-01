@@ -77,12 +77,13 @@ class InboxHandler(FileSystemEventHandler):
     files dropped at once triggers only a single pipeline run.
     """
 
-    def __init__(self, inbox, root, loc_code, identifier, settle_secs=SETTLE_SECS):
+    def __init__(self, inbox, root, loc_code, identifier, fcp_mode=True, settle_secs=SETTLE_SECS):
         super().__init__()
         self.inbox       = inbox
         self.root        = root
         self.loc_code    = loc_code
         self.identifier  = identifier
+        self.fcp_mode    = fcp_mode
         self.settle_secs = settle_secs
         self._timer      = None
         self._lock       = threading.Lock()
@@ -125,6 +126,7 @@ class InboxHandler(FileSystemEventHandler):
                 root       = self.root,
                 loc_code   = self.loc_code,
                 identifier = self.identifier,
+                fcp_mode   = self.fcp_mode,
             )
         except Exception as e:
             log.error(f"Pipeline error: {e}", exc_info=True)
@@ -132,16 +134,17 @@ class InboxHandler(FileSystemEventHandler):
 
 # ── Watcher entry point ───────────────────────────────────────────────────────
 
-def run_watcher(inbox, root, loc_code, identifier):
+def run_watcher(inbox, root, loc_code, identifier, fcp_mode=True):
     os.makedirs(inbox, exist_ok=True)
     log.info(f"SACC Watcher started")
     log.info(f"  Watching : {inbox}")
     log.info(f"  Root     : {root}")
+    log.info(f"  Mode     : {'FCP (GPS auto-detect)' if fcp_mode else 'Classic'}")
     log.info(f"  Location : {loc_code}")
     log.info(f"  ID       : {identifier}")
     log.info(f"  Settle   : {SETTLE_SECS}s")
 
-    handler  = InboxHandler(inbox, root, loc_code, identifier)
+    handler  = InboxHandler(inbox, root, loc_code, identifier, fcp_mode=fcp_mode)
     observer = Observer(timeout=POLL_INTERVAL)
     observer.schedule(handler, path=inbox, recursive=False)
     observer.start()
@@ -168,15 +171,20 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SACC Folder-Watch Daemon")
     parser.add_argument("--inbox",  default=INBOX_PATH,    help="Inbox folder to watch")
     parser.add_argument("--root",   default=SYNOLOGY_ROOT, help="SACC root on Synology")
-    parser.add_argument("--loc",    default="FLM",         help="Location code")
-    parser.add_argument("--id",     required=True,         help="Shoe identifier string")
+    parser.add_argument("--fcp",    action="store_true",   help="Use FCP GPS-detect mode (recommended)")
+    parser.add_argument("--loc",    default="FLM",         help="Location code / GPS fallback")
+    parser.add_argument("--id",     default="",            help="Shoe identifier (classic mode only)")
     parser.add_argument("--settle", type=int, default=SETTLE_SECS,
                         help="Seconds of quiet before pipeline triggers")
     args = parser.parse_args()
+
+    if not args.fcp and not args.id:
+        parser.error("--id is required in classic mode. Use --fcp for GPS auto-detect.")
 
     run_watcher(
         inbox      = args.inbox,
         root       = args.root,
         loc_code   = args.loc,
         identifier = args.id,
+        fcp_mode   = args.fcp,
     )

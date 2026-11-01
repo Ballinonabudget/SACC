@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 DB_PATH     = "/Volumes/Team Bank 12/Sneeaker Solo/sacc.db"
 SOURCES     = [
-    "/Users/miniman/SACC/jordan1_og_stockx.json",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "jordan1_og_stockx.json"),
 ]
 
 

@@ -7,7 +7,7 @@ const _VAPI = 'http://localhost:5174';
 function VerifyView({ mode, accent, folder }) {
   const P = SACC_PALETTE;
   const [folderInput, setFolderInput] = React.useState(folder || '/Volumes/Team Bank 12/Sneeaker Solo');
-  const [whitelistPath, setWhitelistPath] = React.useState('/Users/miniman/SACC/whitelist.json');
+  const [whitelistPath, setWhitelistPath] = React.useState('/Users/daplug/Documents/SACC/whitelist.json');
   const [activeTab, setActiveTab] = React.useState('whitelist'); // 'whitelist' | 'architect'
   const [whitelist, setWhitelist]  = React.useState([]);
   const [dbRecords, setDbRecords]  = React.useState([]);
@@ -138,7 +138,7 @@ function VerifyView({ mode, accent, folder }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
         {[
           ['SOURCE FOLDER', folderInput, setFolderInput, '/Volumes/Team Bank 12/Sneeaker Solo'],
-          ['WHITELIST PATH', whitelistPath, setWhitelistPath, '/Users/miniman/SACC/whitelist.json'],
+          ['WHITELIST PATH', whitelistPath, setWhitelistPath, '/Users/daplug/Documents/SACC/whitelist.json'],
         ].map(([label, val, setter, ph]) => (
           <div key={label} style={{ background: P.panel, border: `1px solid ${P.border}`,
             borderRadius: 8, padding: '10px 12px' }}>

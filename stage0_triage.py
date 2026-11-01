@@ -68,8 +68,8 @@ DEFAULT_IOU_THRESHOLD   = 0.01     # any overlap counts as hand interaction
 DEFAULT_VAD_AGGRESSIVE  = 2        # 0..3, higher = more aggressive speech filter
 VAD_FRAME_MS            = 30       # webrtcvad supports 10/20/30 ms
 VAD_SAMPLE_RATE         = 16000
-
-_FFMPEG = "/Users/miniman/SACC/ffmpeg"  # bundled binary; falls back to PATH
+_THIS_DIR = Path(__file__).resolve().parent
+_FFMPEG   = str(_THIS_DIR / "ffmpeg")  # bundled binary; falls back to PATH
 
 
 # ── Frame sampling ────────────────────────────────────────────────────────────
@@ -109,8 +109,9 @@ def _sample_frames(clip_path: str, n_samples: int) -> list[tuple[int, np.ndarray
 
 # ── Detection ────────────────────────────────────────────────────────────────
 
-def _load_model(weights: str = "yolov8s-worldv2.pt") -> YOLOWorld:
-    model = YOLOWorld(weights)
+def _load_model(weights: str | None = None) -> YOLOWorld:
+    w = weights or str(_THIS_DIR / "yolov8s-worldv2.pt")
+    model = YOLOWorld(w)
     model.set_classes(DETECT_VOCAB)
     return model
 

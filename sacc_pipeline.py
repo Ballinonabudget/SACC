@@ -440,7 +440,15 @@ def stage_vertex(compress_results, dest_dir):
     from gemini_pipeline import route_analysis, BATCH_THRESHOLD
     from kicksdb_enricher import enrich_result as kdb_enrich, cache_stats as kdb_cache_stats
     import os as _os
-    _kdb_enabled = bool(_os.getenv("KICKSDB_API_KEY"))
+    _remote_enabled = _os.getenv("SACC_REMOTE_API_ENABLED", "false").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    _kdb_api_enabled = _os.getenv(
+        "SACC_KICKSDB_API_ENABLED", "false"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    _kdb_enabled = (
+        _remote_enabled and _kdb_api_enabled and bool(_os.getenv("KICKSDB_API_KEY"))
+    )
 
     json_dir = os.path.join(dest_dir, "json")
     os.makedirs(json_dir, exist_ok=True)

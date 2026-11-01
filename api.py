@@ -58,7 +58,7 @@ _ERROR_REGISTRY = {
     "E001": ("config",     "Path argument missing",
              "Provide a 'path' field in the request body."),
     "E002": ("system",     "sacc_pipeline.py not found",
-             "Reinstall SACC or check that /Users/miniman/SACC/ is intact."),
+             "Reinstall SACC or check that /Users/daplug/Documents/SACC/ is intact."),
     "E003": ("config",     "Source folder not found",
              "Check that the NAS is mounted: ls '/Volumes/Team Bank 12'"),
     "E010": ("pipeline",   "Pipeline exited with a non-zero code",
@@ -371,7 +371,7 @@ def apply_location():
 
 @app.route("/api/whitelist")
 def whitelist():
-    path = request.args.get("path", "/Users/miniman/SACC/whitelist.json")
+    path = request.args.get("path", os.path.join(os.path.dirname(os.path.abspath(__file__)), "whitelist.json"))
     if not os.path.exists(path):
         return jsonify({"error": f"Not found: {path}", "records": []}), 404
     try:
@@ -922,7 +922,7 @@ _KNOWN_ERRORS = [
         "code": "E002", "category": "system",
         "title": "sacc_pipeline.py not found",
         "description": "The pipeline orchestrator script is missing from the SACC root directory.",
-        "resolution": "Verify /Users/miniman/SACC/sacc_pipeline.py exists. Re-clone the repo if missing.",
+        "resolution": "Verify /Users/daplug/Documents/SACC/sacc_pipeline.py exists. Re-clone the repo if missing.",
         "example": "",
     },
     {
@@ -939,7 +939,7 @@ _KNOWN_ERRORS = [
         "description": "sacc_pipeline.py crashed or encountered an unhandled exception.",
         "resolution": "Expand the log panel in the Dashboard for the first [ERROR] line. "
                       "Run sacc_pipeline.py directly from Terminal for the full traceback.",
-        "example": "python3 /Users/miniman/SACC/sacc_pipeline.py --inbox <path> --fcp",
+        "example": "python3 /Users/daplug/Documents/SACC/sacc_pipeline.py --inbox <path> --fcp",
     },
     {
         "code": "E011", "category": "system",
@@ -954,9 +954,9 @@ _KNOWN_ERRORS = [
         "code": "E012", "category": "system",
         "title": "Pipeline subprocess crashed",
         "description": "subprocess.run() raised an unexpected exception before the script could start.",
-        "resolution": "Run python3 /Users/miniman/SACC/sacc_pipeline.py directly to see the full error. "
+        "resolution": "Run python3 /Users/daplug/Documents/SACC/sacc_pipeline.py directly to see the full error. "
                       "Check that Python 3 and all dependencies are installed.",
-        "example": "pip3 install -r /Users/miniman/SACC/requirements.txt",
+        "example": "pip3 install -r /Users/daplug/Documents/SACC/requirements.txt",
     },
     {
         "code": "E020", "category": "validation",
@@ -1014,9 +1014,9 @@ _KNOWN_ERRORS = [
         "code": "E060", "category": "api",
         "title": "API server offline",
         "description": "The Flask API on port 5174 is not responding.",
-        "resolution": "Open Terminal and run: bash /Users/miniman/SACC/start_sacc.command\n"
-                      "Or run the API directly: python3 /Users/miniman/SACC/api.py",
-        "example": "bash /Users/miniman/SACC/start_sacc.command",
+        "resolution": "Open Terminal and run: bash /Users/daplug/Documents/SACC/start_sacc.command\n"
+                      "Or run the API directly: python3 /Users/daplug/Documents/SACC/api.py",
+        "example": "bash /Users/daplug/Documents/SACC/start_sacc.command",
     },
 ]
 

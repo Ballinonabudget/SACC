@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 # Bring in the external modules
-sys.path.append("/Users/miniman/Documents/Sneaker_Scripts")
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 try:
     from compress_jordans import run_compression
 except ImportError:
@@ -124,7 +124,7 @@ with st.sidebar:
     )
     whitelist_path = st.text_input(
         "Whitelist JSON Path",
-        value="/Users/miniman/SACC/whitelist.json",
+        value=os.path.join(os.path.dirname(os.path.abspath(__file__)), "whitelist.json"),
         help="Path to your whitelist.json file"
     )
     st.markdown("---")
@@ -1134,7 +1134,7 @@ with tab_fcp:
                         st.error(f"Failed to update {r['_json_file']}: {e}")
                 st.success(f"Updated {updated} JSON records with loc_code_confirmed = {nlp_code}. "
                            f"Run Stage 10 from Terminal to rename the files:")
-                st.code(f"python3 /Users/miniman/SACC/fcp_namer.py --apply-loc --dest \"{fcp_folder}\"")
+                st.code(f"python3 /Users/daplug/Documents/SACC/fcp_namer.py --apply-loc --dest \"{fcp_folder}\"")
                 st.cache_data.clear()
 
         st.markdown("---")
@@ -1143,7 +1143,7 @@ with tab_fcp:
         st.markdown("#### 🔬 JSON Sync Health Check")
         if not _VALIDATOR_AVAILABLE:
             st.warning("json_sync_validator.py not importable. Run from Terminal instead:")
-            st.code(f'python3 /Users/miniman/SACC/json_sync_validator.py "{fcp_folder}"')
+            st.code(f'python3 /Users/daplug/Documents/SACC/json_sync_validator.py "{fcp_folder}"')
         else:
             if st.button("Run Sync Validator", key="fcp_validate"):
                 with st.spinner("Scanning folder…"):

@@ -25,8 +25,8 @@ Usage:
   python sacc_test.py rename  --folder "/Volumes/Team Bank 12/Sneeaker Solo" --loc FLM
 
   # Rename raw footage with no JSON — provide identifier directly
-  python sacc_test.py rename  --folder "/Users/miniman/SACC/ingestion_zone" --loc PDM --id "Air Jordan 1 Chicago" --dry-run
-  python sacc_test.py rename  --folder "/Users/miniman/SACC/ingestion_zone" --loc PDM --id "Air Jordan 1 Chicago" --apply
+  python sacc_test.py rename  --folder "/Users/daplug/Documents/SACC/ingestion_zone" --loc PDM --id "Air Jordan 1 Chicago" --dry-run
+  python sacc_test.py rename  --folder "/Users/daplug/Documents/SACC/ingestion_zone" --loc PDM --id "Air Jordan 1 Chicago" --apply
 """
 
 import os

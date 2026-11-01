@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import struct
 import subprocess
 import sys
 from collections import defaultdict
@@ -77,10 +78,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_APP_DB_PATH = os.path.join(os.path.dirname(__file__), "sacc_app.db")
+_APP_DB_PATH = os.getenv("SACC_APP_DB", os.path.join(os.path.dirname(__file__), "sacc_app.db"))
 _app_db = AppDB(_APP_DB_PATH)
 
 _db_cache: dict = {}
+
+# Multi-modal PoC routes are isolated in their own migration-managed schema.
+# Import failures degrade gracefully so the legacy SACC UI remains launchable.
+try:
+    from sacc_poc.api import router as _poc_router
+    app.include_router(_poc_router)
+    _POC_OK = True
+    _POC_ERROR = ""
+except Exception as _poc_exc:
+    _POC_OK = False
+    _POC_ERROR = str(_poc_exc)
 
 
 def _get_db(folder: str) -> "SACCDB":
@@ -116,7 +128,7 @@ _LOC_ALIASES = {
     "lakeland": "LKL", "lakeland square": "LKL",
     "paddock": "PDM", "paddock mall": "PDM", "ocala": "PDM",
     "tallahassee": "THL", "tally": "THL",
-    "brandon": "BRN", "brandon exchange": "BRN",
+    "brandon": "BTC", "brandon exchange": "BTC", "brandon town center": "BTC", "brandon mall": "BTC",
     "international plaza": "INP", "int plaza": "INP",
     "university mall": "UNM", "university tampa": "UNM",
     "tampa premium": "TPA", "tampa outlets": "TPA",
@@ -127,6 +139,10 @@ _LOC_ALIASES = {
     "gainesville": "GVA", "celebration pointe": "GVA",
     "celebration": "CEL-K", "kissimmee": "CEL-K",
     "osceola": "KSM", "kissimmee osceola": "KSM",
+    "nike clearance 192": "NC192", "clearance 192": "NC192",
+    "store 192": "NC192", "us 192": "NC192", "ncs 192": "NC192",
+    "the loop": "NCLP", "loop": "NCLP", "nike clearance loop": "NCLP",
+    "clearance loop": "NCLP", "loop clearance": "NCLP",
 }
 
 
@@ -268,6 +284,8 @@ def health():
         "fcp_ok": _FCP_OK,
         "renamer_ok": _RENAMER_OK,
         "validator_ok": _VALIDATOR_OK,
+        "multimodal_poc_ok": _POC_OK,
+        "multimodal_poc_error": _POC_ERROR,
         "location_count": len(LOCATION_DB),
         "time": datetime.now(timezone.utc).isoformat(),
     }
@@ -372,7 +390,7 @@ def apply_location(body: ApplyLocationBody):
 
 
 @app.get("/api/whitelist")
-def whitelist(path: str = Query("/Users/miniman/SACC/whitelist.json")):
+def whitelist(path: str = Query(os.path.join(os.path.dirname(os.path.abspath(__file__)), "whitelist.json"))):
     if not os.path.exists(path):
         raise HTTPException(404, f"Not found: {path}")
     with open(path) as fh:
@@ -433,7 +451,7 @@ def rename(body: RenameBody):
                 if "error" in item:
                     raise HTTPException(500, item["error"])
                 renamed.append(item)
-                results.append({"original": item.get("original", ""), "new": item.get("new_name", "")})
+                results.append({"original": item.get("original", ""), "new": item.get("new", "")})
             return {"ok": True, "mode": "fcp", "dry_run": body.dry_run, "processed": len(renamed), "results": results}
         except HTTPException:
             raise
@@ -478,7 +496,7 @@ def pipeline_run(body: PipelineRunBody):
 
 # ── Phase 7 — SSE streaming rename ───────────────────────────────────────────
 
-_SACC_ROOT = os.path.dirname(__file__)  # /Users/miniman/SACC
+_SACC_ROOT = os.path.dirname(__file__)  # the repo root, resolved at runtime
 
 # Phase 7/8: prefer repo scripts over NAS path (NAS scripts may not exist)
 def _resolve_phase_script(nas_path: str, repo_fallback: str) -> str:
@@ -656,21 +674,73 @@ def db_sync(body: DbSyncBody):
     return {"ok": True, "folder": body.path, **result, "validation": summary}
 
 
+@app.post("/api/db/sync-archive")
+async def db_sync_archive(request: Request):
+    """
+    Populate the central archive DB by recursively scanning archive_root for
+    shoot-day folders containing json/. Each row's folder_path tracks the
+    actual video location so the hub DB stays decoupled from video paths.
+    Body: {"hub": "...", "root": "..."} — both optional, fall back to settings.
+    """
+    if not _DB_OK:
+        raise HTTPException(500, "db.py not available")
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    settings = _app_db.get_settings()
+    hub  = body.get("hub")  or settings.get("archive_db_folder", "")
+    root = body.get("root") or settings.get("archive_root", "")
+    if not hub or not os.path.isdir(hub):
+        raise HTTPException(404, f"Hub folder not found: {hub or '<archive_db_folder unset>'}")
+    if not root or not os.path.isdir(root):
+        raise HTTPException(404, f"Archive root not found: {root or '<archive_root unset>'}")
+    db = _get_db(hub)
+    result = db.sync_archive_recursive(root)
+    summary = db.validation_summary()
+    return {"ok": True, "hub": hub, "root": root, **result, "validation": summary}
+
+
 @app.get("/api/db/search")
 def db_search(
     path: str = Query(""),
     q: str = Query(""),
+    orientation: str = Query("all"),
     limit: int = Query(50, le=500),
     offset: int = Query(0),
 ):
     if not _DB_OK:
         raise HTTPException(500, "db.py not available")
-    if not os.path.isdir(path):
-        raise HTTPException(404, f"Folder not found: {path}")
+    scope = "folder"
+    if not path:
+        path = _app_db.get_settings().get("archive_db_folder", "") or ""
+        scope = "global"
+    if not path or not os.path.isdir(path):
+        raise HTTPException(404, f"Folder not found: {path or '<archive_db_folder unset>'}")
     db = _get_db(path)
-    results = db.search(q, limit=limit, offset=offset)
+    results = db.search(q, limit=limit, offset=offset, orientation=orientation)
     total = db.stats().get("total", 0)
-    return {"query": q, "total": total, "count": len(results), "offset": offset, "results": results}
+    return {"query": q, "orientation": orientation, "total": total, "count": len(results), "offset": offset, "results": results, "scope": scope}
+
+
+@app.post("/api/db/backfill-orientation")
+async def db_backfill_orientation(request: Request):
+    """ffprobe every clip in the DB and write video_width/height/orientation."""
+    if not _DB_OK:
+        raise HTTPException(500, "db.py not available")
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    path = body.get("path", "") or _app_db.get_settings().get("archive_db_folder", "")
+    only_missing = bool(body.get("only_missing", True))
+    if not path or not os.path.isdir(path):
+        raise HTTPException(404, f"Folder not found: {path or '<archive_db_folder unset>'}")
+    db = _get_db(path)
+    result = db.backfill_orientation(only_missing=only_missing)
+    return {"ok": True, "folder": path, **result}
 
 
 @app.get("/api/db/stats")
@@ -680,7 +750,11 @@ def db_stats(path: str = Query("")):
     if not os.path.isdir(path):
         raise HTTPException(404, f"Folder not found: {path}")
     db = _get_db(path)
-    return {"stats": db.stats(), "top_locations": db.top_locations(10)}
+    return {
+        "stats":           db.stats(),
+        "top_locations":   db.top_locations(10),
+        "model_breakdown": db.model_breakdown(25),
+    }
 
 
 @app.get("/api/db/record")
@@ -852,6 +926,141 @@ def pipeline_mark_fcp(body: MarkFCPBody):
         con.close()
 
 
+# ── MP4 moov-mover — makes camera-recorded files browser-streamable ───────────
+
+def _parse_mp4_layout(path: Path) -> Optional[dict]:
+    """
+    Scan top-level MP4 boxes and return layout info, or None on parse failure.
+    moov_before_mdat=True means the file is already faststart — serve as-is.
+    """
+    try:
+        boxes: list = []
+        with open(path, 'rb') as f:
+            f.seek(0, 2)
+            file_size = f.tell()
+            f.seek(0)
+            pos = 0
+            while pos < file_size and len(boxes) < 64:
+                raw = f.read(8)
+                if len(raw) < 8:
+                    break
+                size, btype = struct.unpack('>I4s', raw)
+                btype = btype.decode('latin-1', errors='replace')
+                if size == 1:
+                    ext = f.read(8)
+                    if len(ext) < 8:
+                        break
+                    size = struct.unpack('>Q', ext)[0]
+                elif size == 0:
+                    size = file_size - pos
+                if size < 8:
+                    break
+                boxes.append({'type': btype, 'offset': pos, 'size': size})
+                pos += size
+                f.seek(pos)
+
+        moov = next((b for b in boxes if b['type'] == 'moov'), None)
+        mdat = next((b for b in boxes if b['type'] == 'mdat'), None)
+        if not moov or not mdat:
+            return None
+        return {
+            'moov_offset':      moov['offset'],
+            'moov_size':        moov['size'],
+            'mdat_offset':      mdat['offset'],
+            'mdat_size':        mdat['size'],
+            'file_size':        file_size,
+            'moov_before_mdat': moov['offset'] < mdat['offset'],
+        }
+    except Exception:
+        return None
+
+
+_MP4_CONTAINERS = {
+    b'moov', b'trak', b'mdia', b'minf', b'stbl', b'udta',
+    b'meta', b'ilst', b'dinf', b'edts',
+}
+
+
+def _walk_mp4_boxes(data: bytearray, start: int, end: int, delta: int):
+    """Recursively walk moov bytes and add delta to every stco/co64 entry."""
+    pos = start
+    while pos + 8 <= end:
+        size = struct.unpack_from('>I', data, pos)[0]
+        btype = bytes(data[pos + 4:pos + 8])
+        if size == 1:
+            if pos + 16 > end:
+                break
+            size = struct.unpack_from('>Q', data, pos + 8)[0]
+            hdr = 16
+        elif size == 0:
+            size = end - pos
+            hdr = 8
+        else:
+            hdr = 8
+        if size < hdr or pos + size > end:
+            break
+
+        if btype in (b'stco', b'co64'):
+            p = pos + hdr + 4  # skip version+flags
+            if p + 4 <= end:
+                count = struct.unpack_from('>I', data, p)[0]
+                p += 4
+                fmt, esz = ('>I', 4) if btype == b'stco' else ('>Q', 8)
+                for _ in range(count):
+                    if p + esz > end:
+                        break
+                    val = struct.unpack_from(fmt, data, p)[0]
+                    struct.pack_into(fmt, data, p, val + delta)
+                    p += esz
+        elif btype in _MP4_CONTAINERS:
+            _walk_mp4_boxes(data, pos + hdr, pos + size, delta)
+
+        pos += size
+
+
+def _stream_faststart(path: Path, layout: dict):
+    """
+    Sync generator that yields the file content with moov relocated before mdat.
+    Output byte-order: pre-mdat content → updated moov → mdat.
+    Total bytes = file_size (identical content, just reordered).
+    """
+    moov_offset = layout['moov_offset']
+    moov_size   = layout['moov_size']
+    mdat_offset = layout['mdat_offset']
+    mdat_size   = layout['mdat_size']
+    CHUNK = 2 * 1024 * 1024  # 2 MB per disk read
+
+    with open(path, 'rb') as f:
+        f.seek(moov_offset)
+        moov_data = bytearray(f.read(moov_size))
+
+    # All stco/co64 chunk offsets shift right by moov_size
+    _walk_mp4_boxes(moov_data, 0, moov_size, moov_size)
+
+    with open(path, 'rb') as f:
+        # 1. Everything before mdat (ftyp, free, ...)
+        remaining = mdat_offset
+        while remaining > 0:
+            chunk = f.read(min(CHUNK, remaining))
+            if not chunk:
+                break
+            yield chunk
+            remaining -= len(chunk)
+
+        # 2. Patched moov
+        yield bytes(moov_data)
+
+        # 3. Original mdat
+        f.seek(mdat_offset)
+        remaining = mdat_size
+        while remaining > 0:
+            chunk = f.read(min(CHUNK, remaining))
+            if not chunk:
+                break
+            yield chunk
+            remaining -= len(chunk)
+
+
 # ── Media ─────────────────────────────────────────────────────────────────────
 
 @app.post("/api/reveal")
@@ -876,9 +1085,45 @@ def serve_video(path: str = Query(""), file: str = Query("")):
         raise HTTPException(400, "path and file required")
     safe_dir = Path(path).resolve()
     safe_file = (safe_dir / Path(file).name).resolve()
-    if safe_file.parent != safe_dir or not safe_file.is_file():
-        raise HTTPException(404, "File not found")
-    return FileResponse(str(safe_file))
+    if safe_file.parent != safe_dir:
+        raise HTTPException(403, "Path traversal denied")
+
+    # Case-insensitive fallback for NAS ext4 (case-sensitive) filesystem
+    # Also handles extension-case changes (.MP4 → .mp4) and extension-type changes (.mov → .mp4)
+    if not safe_file.is_file():
+        stem = Path(file).stem
+        target_suffix = Path(file).suffix.lower()
+        _VIDEO_EXTS = {'.mp4', '.mov', '.mts', '.m4v'}
+        match = None  # type: Optional[Path]
+        for candidate in safe_dir.iterdir():
+            if candidate.stem.lower() != stem.lower():
+                continue
+            if candidate.suffix.lower() == target_suffix:
+                match = candidate  # exact (case-insensitive) suffix — stop here
+                break
+            if candidate.suffix.lower() in _VIDEO_EXTS and match is None:
+                match = candidate  # any video ext — keep looking for better match
+        if match is None:
+            raise HTTPException(404, f"File not found: {file}")
+        safe_file = match
+
+    # Parse MP4 box layout to detect moov position
+    layout = _parse_mp4_layout(safe_file)
+
+    if layout is None or layout['moov_before_mdat']:
+        # Already faststart or not a parseable MP4 — serve with full range support
+        return FileResponse(str(safe_file), media_type="video/mp4")
+
+    # moov is at end of file (camera-recorded) — relocate it before mdat for streaming
+    return StreamingResponse(
+        _stream_faststart(safe_file, layout),
+        media_type="video/mp4",
+        headers={
+            "Content-Length": str(layout['file_size']),
+            "Accept-Ranges":  "none",
+            "Cache-Control":  "no-store",
+        },
+    )
 
 
 # ── Error Repository ──────────────────────────────────────────────────────────
@@ -888,7 +1133,7 @@ _KNOWN_ERRORS = [
     # Config
     {"code": "CFG-001", "category": "config",     "title": "GEMINI_API_KEY not set",
      "description": "The GEMINI_API_KEY environment variable is missing from .env. Stage 8 (Vertex AI) cannot authenticate.",
-     "resolution": "Add GEMINI_API_KEY=<your-key> to /Users/miniman/SACC/.env and restart the server.",
+     "resolution": "Add GEMINI_API_KEY=<your-key> to /Users/daplug/Documents/SACC/.env and restart the server.",
      "example": "# .env\nGEMINI_API_KEY=AIza..."},
     {"code": "CFG-002", "category": "config",     "title": "NAS volume not mounted",
      "description": "The source folder path resolves to a local or non-existent directory. Expected /Volumes/Team Bank 12/SACC/.",
@@ -901,8 +1146,8 @@ _KNOWN_ERRORS = [
     # System
     {"code": "SYS-001", "category": "system",     "title": "ffprobe binary not found",
      "description": "ffprobe is required for Stage 5 pre-flight (duration check) and Stage 3 metadata extraction (camera model, shoot date). Not found in PATH or repo root.",
-     "resolution": "The ffprobe binary ships with the repo at /Users/miniman/SACC/ffprobe. Verify it is executable: chmod +x /Users/miniman/SACC/ffprobe. Or install via: brew install ffmpeg.",
-     "example": "chmod +x /Users/miniman/SACC/ffprobe"},
+     "resolution": "The ffprobe binary ships with the repo at /Users/daplug/Documents/SACC/ffprobe. Verify it is executable: chmod +x /Users/daplug/Documents/SACC/ffprobe. Or install via: brew install ffmpeg.",
+     "example": "chmod +x /Users/daplug/Documents/SACC/ffprobe"},
     {"code": "SYS-002", "category": "system",     "title": "Port 5174 already in use",
      "description": "start_sacc.command detected a process already bound to port 5174. If the kill fails, the server will not start.",
      "resolution": "Run: lsof -ti tcp:5174 | xargs kill -9. Then re-launch start_sacc.command.",
@@ -910,7 +1155,7 @@ _KNOWN_ERRORS = [
     {"code": "SYS-003", "category": "system",     "title": "sacc_app.db locked (WAL timeout)",
      "description": "SQLite WAL file lock timeout — usually caused by two server processes running simultaneously.",
      "resolution": "Kill all uvicorn processes: pkill -f uvicorn. Then restart with start_sacc.command.",
-     "example": "pkill -f uvicorn && bash /Users/miniman/SACC/start_sacc.command"},
+     "example": "pkill -f uvicorn && bash /Users/daplug/Documents/SACC/start_sacc.command"},
     # Pipeline
     {"code": "PIPE-001", "category": "pipeline",  "title": "Inbox folder not found",
      "description": "The --inbox path passed to sacc_pipeline.py does not exist or is not mounted.",
@@ -1081,7 +1326,7 @@ def fg_entries(
             "tag": (row.get("model") or "").upper()[:24],
             "isDark": idx % 2 == 0,
             "images": {
-                "hero":         f"/api/video?path={row.get('folder_path', '')}&file={stem}.mov",
+                "hero":         f"/api/video?path={row.get('folder_path', '')}&file={stem}{Path(row.get('original_file') or '.mp4').suffix or '.mp4'}",
                 "threequarter": "",
                 "material":     "",
                 "sole":         "",
@@ -1110,6 +1355,11 @@ def fg_entries(
         "entries": entries,
     }
 
+
+# Local recovered-media catalogue; routes precede the static frontend.
+from sacc_takeout.library_api import router as _library_router, LocalLibraryGuard
+app.include_router(_library_router)
+app.add_middleware(LocalLibraryGuard)
 
 # ── Static frontend — must be last so /api/* routes take precedence ───────────
 

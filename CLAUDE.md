@@ -15,10 +15,10 @@ presents everything through a web UI with search, gallery, timeline, and pipelin
 
 ```bash
 # Double-click in Finder:
-/Users/miniman/SACC/start_sacc.command
+/Users/daplug/Documents/SACC/start_sacc.command
 
 # Or from terminal:
-bash /Users/miniman/SACC/start_sacc.command
+bash /Users/daplug/Documents/SACC/start_sacc.command
 ```
 
 This starts:
@@ -34,7 +34,7 @@ The current focus is the SCAA frontend + Flask API stack, not Streamlit.
 ## Repo layout
 
 ```
-/Users/miniman/SACC/
+/Users/daplug/Documents/SACC/
 ├── start_sacc.command     ← double-click launcher (Finder-friendly)
 ├── api.py                 ← Flask REST API (port 5174)
 ├── app.py                 ← Streamlit dashboard (legacy, port 8501)
@@ -85,13 +85,13 @@ JSON written → db.py (SQLite) ← api.py (Flask) ← SCAA frontend (search/gal
 
 | What | Path |
 |------|------|
-| Repo | `/Users/miniman/SACC/` |
+| Repo | `/Users/daplug/Documents/SACC/` |
 | Branch | `v2.0-path-integration` |
 | NAS root | `/Volumes/Team Bank 12/SACC/` |
 | NAS Inbox | `/Volumes/Team Bank 12/SACC/Inbox/` |
 | Sneeaker Solo folder | `/Volumes/Team Bank 12/Sneeaker Solo/` (existing JSON + videos, test target) |
 | SQLite DB | `/Volumes/Team Bank 12/Sneeaker Solo/sacc.db` (or per-folder) |
-| .env | `/Users/miniman/SACC/.env` |
+| .env | `/Users/daplug/Documents/SACC/.env` |
 | API log | `/tmp/sacc_api.log` |
 | UI log | `/tmp/sacc_ui.log` |
 
@@ -101,27 +101,31 @@ JSON written → db.py (SQLite) ← api.py (Flask) ← SCAA frontend (search/gal
 
 ```
 GEMINI_API_KEY=<already set in .env>
+GEMINI_MODEL=gemini-3.8-flash
+SACC_REMOTE_API_ENABLED=true
+SACC_KICKSDB_API_ENABLED=false
 VERTEX_PROJECT_ID=<set this to switch to Vertex AI — preferred for production>
 VERTEX_LOCATION=us-central1
-VERTEX_MODEL=gemini-2.5-pro
+VERTEX_MODEL=gemini-3.8-flash
 ```
 
 `gemini_pipeline.py` loads `.env` automatically via `python-dotenv`.
 When `VERTEX_PROJECT_ID` is set, it switches to Vertex AI. Otherwise it uses
-the Gemini API via `google.generativeai`.
+the Gemini Developer API via the supported `google-genai` SDK. Remote calls
+remain blocked unless `SACC_REMOTE_API_ENABLED=true`.
 
 ---
 
 ## Gemini pipeline — current state (already correct)
 
 `gemini_pipeline.py` already has:
-- ✅ Gemini File API (upload via `genai.upload_file()`, not base64)
+- ✅ Gemini File API (upload via `client.files.upload()`, not base64)
 - ✅ Upload-once pattern (upload → wait for ACTIVE → infer separately)
 - ✅ Exponential backoff retry (`_retry()` helper: 5s → 10s → 20s)
 - ✅ Auto-delete uploaded file after inference
 - ✅ `.env` loading
 - ✅ Vertex AI fallback path built in
-- ✅ Model: `gemini-2.5-pro` (not flash — pro handles video better)
+- ✅ Model: `gemini-3.8-flash` (GA; video + structured-output support)
 - ✅ Location detection: visual signage + audio transcript → SACC location code
 
 **The 429 rate limit issue from earlier sessions is largely addressed.**
@@ -207,8 +211,8 @@ python sacc_test.py rename --folder "/Volumes/Team Bank 12/Sneeaker Solo" --loc 
 python sacc_test.py rename --folder "/Volumes/Team Bank 12/Sneeaker Solo" --loc FLM --apply
 
 # Rename with manual identifier (no JSON needed)
-python sacc_test.py rename --folder "/Users/miniman/SACC/ingestion_zone" --loc PDM --id "Air Jordan 1 Chicago" --dry-run
-python sacc_test.py rename --folder "/Users/miniman/SACC/ingestion_zone" --loc PDM --id "Air Jordan 1 Chicago" --apply
+python sacc_test.py rename --folder "/Users/daplug/Documents/SACC/ingestion_zone" --loc PDM --id "Air Jordan 1 Chicago" --dry-run
+python sacc_test.py rename --folder "/Users/daplug/Documents/SACC/ingestion_zone" --loc PDM --id "Air Jordan 1 Chicago" --apply
 ```
 
 ---
@@ -236,8 +240,8 @@ python sacc_pipeline.py \
 ## Git state
 
 ```bash
-git -C /Users/miniman/SACC log --oneline -10
-git -C /Users/miniman/SACC status
+git -C /Users/daplug/Documents/SACC log --oneline -10
+git -C /Users/daplug/Documents/SACC status
 ```
 
 Recent commits (most recent first):
@@ -256,7 +260,7 @@ Branch: `v2.0-path-integration`
 
 ### 1. Verify start_sacc.command works end-to-end
 ```bash
-bash /Users/miniman/SACC/start_sacc.command
+bash /Users/daplug/Documents/SACC/start_sacc.command
 # Check: http://localhost:5174/api/health → should return {"status":"ok"}
 # Check: http://localhost:5173/SACC.html  → should open UI
 ```
@@ -309,15 +313,15 @@ Cowork handles reports, the project tracker, and GUI prototyping.
 
 ## Script Consolidation — April 2026
 
-SACC (`/Users/miniman/SACC/`) is now the **single central hub for all Python scripts**.
-The `Sneaker_Scripts` folder (`/Users/miniman/Documents/Sneaker_Scripts/`) is now legacy — do NOT look for scripts there.
+SACC (`/Users/daplug/Documents/SACC/`) is now the **single central hub for all Python scripts**.
+The `Sneaker_Scripts` folder (`/Users/daplug/Documents/SACC  (Sneaker_Scripts retired)/`) is now legacy — do NOT look for scripts there.
 
 ### Scripts added from Sneaker_Scripts
 
 | File | Description |
 |------|-------------|
 | `Beta Halloween Edition.py` | Apple Compressor batch script for Halloween b-roll footage |
-| `sneaker_pipeline.py` | Earlier standalone pipeline (kept for reference) |
+| `archive/sneaker_pipeline.py` | Earlier standalone pipeline (archived — do not invoke; hardcodes NAS write paths) |
 | `sneaker_schema.py` | Sneaker metadata schema definitions |
 | `API_Ready_HEVC.compressorsetting` | Apple Compressor HEVC preset — used by `compress_jordans.py` |
 
@@ -326,20 +330,20 @@ Both folders had `compress_jordans.py`. The SACC version (Apr 23, 2026) is newer
 
 ### Path fix applied
 `compress_jordans.py` previously referenced `SETTING_PATH` pointing to `Sneaker_Scripts/`.
-This has been updated to `/Users/miniman/SACC/API_Ready_HEVC.compressorsetting`.
+This has been updated to `/Users/daplug/Documents/SACC/API_Ready_HEVC.compressorsetting`.
 
 ### Updated repo layout additions
 ```
-/Users/miniman/SACC/
+/Users/daplug/Documents/SACC/
 ├── API_Ready_HEVC.compressorsetting  ← Apple Compressor HEVC preset
 ├── Beta Halloween Edition.py         ← Compressor batch for Halloween b-roll
-├── sneaker_pipeline.py               ← Standalone pipeline (legacy reference)
+├── archive/sneaker_pipeline.py       ← Standalone pipeline (archived — do not invoke)
 └── sneaker_schema.py                 ← Metadata schema definitions
 ```
 
 
 ### Additional recovery — sneaker_schema.py (April 2026)
 `sneaker_schema.py` was found in `/Users/miniman/Downloads/` (not in Sneaker_Scripts as expected).
-It has been copied to `/Users/miniman/SACC/sneaker_schema.py`.
+It has been copied to `/Users/daplug/Documents/SACC/sneaker_schema.py`.
 The Downloads copies at `/Users/miniman/Downloads/sneaker_schema.py` and
 `/Users/miniman/Downloads/Claude Code/sneaker_schema.py` are now redundant.

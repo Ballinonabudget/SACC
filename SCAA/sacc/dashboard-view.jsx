@@ -2,7 +2,7 @@
 // Auto-runs duplicate scan on folder load. Proxy Cleaned removed from preflight.
 
 const API = 'http://localhost:5174';
-const DEFAULT_FOLDER = '/Volumes/Team Bank 12/Sneeaker Solo/Sneaker solo Originals';
+const DEFAULT_FOLDER = '/Volumes/Team Bank 12/Sneeaker Solo';
 
 function DashboardView({ mode, accent, folder, setFolder }) {
   const P = SACC_PALETTE;
@@ -14,10 +14,9 @@ function DashboardView({ mode, accent, folder, setFolder }) {
   const [pipelineRes, setPipelineRes]   = React.useState(null);
   const [pipelineRunning, setPipelineRunning] = React.useState(false);
   const [pipelineLoc, setPipelineLoc]   = React.useState('');
-  // Folder is session-only — not persisted to localStorage.
-  // Starts blank so user consciously chooses a path each session.
-  const [folderInput, setFolderInput]   = React.useState('');
+  const [folderInput, setFolderInput]   = React.useState(() => localStorage.getItem('sacc_activeFolder') || '');
   const [apiOnline, setApiOnline]       = React.useState(null);
+  const [dbIndex,   setDbIndex]         = React.useState(null);  // model_breakdown response
 
   // Check API health on mount
   React.useEffect(() => {
@@ -57,7 +56,7 @@ function DashboardView({ mode, accent, folder, setFolder }) {
           setDbStats(null);
         } else {
           setDbStats(d);
-          // ── Auto-trigger duplicate scan immediately on folder load ──
+          setFolder(f);          // ← propagate to App so Search/Verify see live DB
           runPreflightFor(f);
         }
         setLoading(false);
@@ -66,10 +65,20 @@ function DashboardView({ mode, accent, folder, setFolder }) {
         setStatsError(`Could not reach API at ${API} — is the server running? (${err.message})`);
         setLoading(false);
       });
-  }, [folderInput, runPreflightFor]);
+  }, [folderInput, runPreflightFor, setFolder]);
 
   // Only auto-load if a folder is already set (it won't be on fresh session)
   React.useEffect(() => { if (apiOnline && folderInput.trim()) loadStats(); }, [apiOnline]);
+
+  // Fetch live DB index counters whenever dbStats loads successfully
+  React.useEffect(() => {
+    const f = folderInput.trim();
+    if (!dbStats || !f) return;
+    fetch(`${API}/api/db/stats?path=${encodeURIComponent(f)}`)
+      .then(r => r.json())
+      .then(d => { if (d.model_breakdown) setDbIndex(d); })
+      .catch(() => {});
+  }, [dbStats, folderInput]);
 
   // Keep manual button as a re-run option
   const runPreflight = () => runPreflightFor(folderInput);
@@ -195,7 +204,7 @@ function DashboardView({ mode, accent, folder, setFolder }) {
         <div style={{ background: P.error + '15', border: `1px solid ${P.error}44`,
           borderRadius: 8, padding: '10px 14px', fontSize: 12,
           color: P.error, fontFamily: '-apple-system, sans-serif' }}>
-          ✗ API server offline — start it with: <code style={{ fontFamily: 'Space Mono, monospace', fontSize: 11 }}>python3 /Users/miniman/SACC/api.py</code>
+          ✗ API server offline — start it with: <code style={{ fontFamily: 'Space Mono, monospace', fontSize: 11 }}>python3 /Users/daplug/Documents/SACC/api.py</code>
         </div>
       )}
 
@@ -236,6 +245,75 @@ function DashboardView({ mode, accent, folder, setFolder }) {
           </div>
         ))}
       </div>
+
+      {/* ── Archive Index — live DB counters ── */}
+      {dbIndex && (() => {
+        const mb  = dbIndex.model_breakdown || {};
+        const st  = dbIndex.stats || {};
+        const top = mb.top_models || [];
+        const max = top[0]?.clip_count || 1;
+        return (
+          <div style={{ background: P.panel, border: `1px solid ${P.border}`, borderRadius: 10, padding: '14px 16px' }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: P.text,
+              fontFamily: '-apple-system, sans-serif', marginBottom: 10 }}>
+              Archive Index
+            </div>
+
+            {/* Summary row */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 14 }}>
+              {[
+                { val: st.total      ?? '—', label: 'Total Clips'     },
+                { val: mb.unique_models ?? '—', label: 'Unique Models'  },
+                { val: mb.unique_skus   ?? '—', label: 'Unique SKUs'    },
+                { val: st.has_sku    ?? '—', label: 'SKU Identified'  },
+              ].map((c, i) => (
+                <div key={i} style={{ background: P.bg, borderRadius: 7,
+                  border: `1px solid ${P.border}`, padding: '10px 12px' }}>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: P.accent,
+                    fontFamily: '-apple-system, sans-serif', lineHeight: 1 }}>{c.val}</div>
+                  <div style={{ fontSize: 9, color: P.muted,
+                    fontFamily: 'Space Mono, monospace', marginTop: 3 }}>{c.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Model breakdown bar chart */}
+            {top.length > 0 && (
+              <>
+                <div style={{ fontSize: 9, color: P.muted, fontFamily: 'Space Mono, monospace',
+                  letterSpacing: '0.06em', marginBottom: 6 }}>
+                  MODEL BREAKDOWN — top {top.length}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {top.map((m, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 160, fontSize: 10, color: P.text,
+                        fontFamily: '-apple-system, sans-serif',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        flexShrink: 0 }} title={m.model}>
+                        {m.model}
+                      </div>
+                      <div style={{ flex: 1, height: 6, background: P.border, borderRadius: 3, overflow: 'hidden' }}>
+                        <div style={{
+                          width: `${(m.clip_count / max) * 100}%`,
+                          height: '100%',
+                          background: P.accent,
+                          borderRadius: 3,
+                          opacity: 0.7 + (0.3 * (1 - i / top.length)),
+                        }} />
+                      </div>
+                      <div style={{ width: 28, fontSize: 10, color: P.muted,
+                        fontFamily: 'Space Mono, monospace', textAlign: 'right', flexShrink: 0 }}>
+                        {m.clip_count}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Stage 8 queue — amber/info, not errors */}
       {dbStats?.queue?.length > 0 && (

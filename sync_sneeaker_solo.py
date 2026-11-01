@@ -62,7 +62,7 @@ def main():
     try:
         from db import SACCDB
     except ImportError:
-        print("[ERROR] Cannot import db.py — run from /Users/miniman/SACC/")
+        print("[ERROR] Cannot import db.py — run from /Users/daplug/Documents/SACC/")
         sys.exit(1)
 
     db_path = os.path.join(folder, DB_NAME)

@@ -1,11 +1,11 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
 # SACC Legacy Cleanup — cleanup_legacy.sh
-# Run once from Terminal: bash /Users/miniman/SACC/cleanup_legacy.sh
+# Run once from Terminal: bash /Users/daplug/Documents/SACC/cleanup_legacy.sh
 # Creates a dated archive first, then removes all decommissioned files.
 # ─────────────────────────────────────────────────────────────────────────────
 
-SACC="/Users/miniman/SACC"
+SACC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARCHIVE="$SACC/_decommissioned_$(date +%Y%m%d)"
 
 echo ""

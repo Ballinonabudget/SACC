@@ -7,6 +7,7 @@
 
 SACC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT=5174
+PYTHON_BIN="$SACC_DIR/.venv-poc-313/bin/python"
 
 # ── Cleanup on exit ──────────────────────────────────────────────────────────
 cleanup() {
@@ -26,10 +27,17 @@ if lsof -ti tcp:$PORT > /dev/null 2>&1; then
   sleep 0.5
 fi
 
-# ── Ensure FastAPI / uvicorn are installed ───────────────────────────────────
-python3 -c "import fastapi, uvicorn" 2>/dev/null || {
-  echo "→ Installing fastapi and uvicorn…"
-  python3 -m pip install fastapi "uvicorn[standard]" --quiet
+# ── Ensure the supported SACC runtime is available ───────────────────────────
+if [ ! -x "$PYTHON_BIN" ]; then
+  SYSTEM_PYTHON="/opt/homebrew/bin/python3.13"
+  [ -x "$SYSTEM_PYTHON" ] || SYSTEM_PYTHON="$(command -v python3)"
+  echo "→ Creating SACC Python environment…"
+  "$SYSTEM_PYTHON" -m venv "$SACC_DIR/.venv-poc-313"
+fi
+
+"$PYTHON_BIN" -c "import fastapi, uvicorn, google.genai" 2>/dev/null || {
+  echo "→ Installing SACC dependencies…"
+  "$PYTHON_BIN" -m pip install -r "$SACC_DIR/requirements-poc.txt" --quiet
 }
 
 echo ""
@@ -47,7 +55,7 @@ echo ""
 
 # ── Start FastAPI server (serves both API and SCAA static frontend) ──────────
 cd "$SACC_DIR"
-python3 -m uvicorn main:app --host 127.0.0.1 --port $PORT > /tmp/sacc_api.log 2>&1 &
+"$PYTHON_BIN" -m uvicorn main:app --host 127.0.0.1 --port $PORT > /tmp/sacc_api.log 2>&1 &
 SERVER_PID=$!
 echo "  ✓ Server started (PID $SERVER_PID)"
 

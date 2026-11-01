@@ -44,6 +44,12 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 KICKSDB_API_KEY  = os.getenv("KICKSDB_API_KEY", "")
 KICKSDB_BASE_URL = os.getenv("KICKSDB_BASE_URL", "https://api.kicks.dev/v3")
+REMOTE_API_ENABLED = (
+    os.getenv("SACC_REMOTE_API_ENABLED", "false").strip().lower()
+    in {"1", "true", "yes", "on"}
+    and os.getenv("SACC_KICKSDB_API_ENABLED", "false").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
 
 # In-process SKU cache — prevents duplicate API calls in the same pipeline run.
 # Keyed by sku string; value is the enrichment dict (or {} on miss).
@@ -85,6 +91,15 @@ def enrich(sku: str) -> dict:
 
     if sku in _SKU_CACHE:
         return _SKU_CACHE[sku]
+
+    if not REMOTE_API_ENABLED:
+        result = {
+            "kdb_verified":    False,
+            "kdb_miss_reason": "Remote API access is locked in .env",
+            "kdb_source":      "kicksdb",
+        }
+        _SKU_CACHE[sku] = result
+        return result
 
     if not KICKSDB_API_KEY:
         result = {

@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "fixture-v1",
+  "source": "synthetic",
+  "provenance": "Tests only",
+  "stores": [
+    {
+      "version_id": "nike-near-v1",
+      "store_id": "nike-near",
+      "retailer": "Nike",
+      "branch": "SYNTHETIC nike-near",
+      "store_type": "fixture",
+      "venue_id": "test-mall",
+      "latitude": 10,
+      "longitude": -30,
+      "valid_from": "2010-01-01",
+      "valid_to": null,
+      "provenance": "Synthetic test coordinates; no actual stores"
+    },
+    {
+      "version_id": "adidas-v1",
+      "store_id": "adidas",
+      "retailer": "adidas",
+      "branch": "SYNTHETIC adidas",
+      "store_type": "fixture",
+      "venue_id": "test-mall",
+      "latitude": 10.0001,
+      "longitude": -30,
+      "valid_from": "2010-01-01",
+      "valid_to": null,
+      "provenance": "Synthetic test coordinates; no actual stores"
+    },
+    {
+      "version_id": "footaction-v1",
+      "store_id": "footaction",
+      "retailer": "Footaction",
+      "branch": "SYNTHETIC footaction",
+      "store_type": "fixture",
+      "venue_id": "test-mall",
+      "latitude": 10.0002,
+      "longitude": -30,
+      "valid_from": "2010-01-01",
+      "valid_to": null,
+      "provenance": "Synthetic test coordinates; no actual stores"
+    },
+    {
+      "version_id": "finish-line-v1",
+      "store_id": "finish-line",
+      "retailer": "Finish Line",
+      "branch": "SYNTHETIC finish-line",
+      "store_type": "fixture",
+      "venue_id": "test-mall",
+      "latitude": 10.0003,
+      "longitude": -30,
+      "valid_from": "2010-01-01",
+      "valid_to": null,
+      "provenance": "Synthetic test coordinates; no actual stores"
+    },
+    {
+      "version_id": "nike-far-v1",
+      "store_id": "nike-far",
+      "retailer": "Nike",
+      "branch": "SYNTHETIC nike-far",
+      "store_type": "fixture",
+      "venue_id": "test-outlet",
+      "latitude": 11,
+      "longitude": -31,
+      "valid_from": "2010-01-01",
+      "valid_to": null,
+      "provenance": "Synthetic test coordinates; no actual stores"
+    }
+  ]
+}
