@@ -3,8 +3,8 @@
 ## Active Environment & Repository State
 - **Repo Path**: `/Users/daplug/Documents/SACC`
 - **Active Branch**: `codex/takeout-recovery-m1`
-- **Remote**: `https://github.com/Ballinonabudget/SACC.git`
-- **Active Environment**: macOS Apple Silicon M4, Python 3.13.15 virtualenv (`.venv-poc-313`)
+- **Remote**: `git@github.com:Ballinonabudget/SACC.git`
+- **Active Environment**: macOS Apple Silicon M1, Python 3.13.15 virtualenv (`.venv-poc-313`)
 - **Last Verified Test Run**: 91 of 91 unit tests passing (`PYTHONPATH=tests:. .venv-poc-313/bin/python -m unittest discover tests`)
 - **Coordination Protocols**: Defined in `SACC_ANTIGRAVITY_RESPONSIBILITIES_AND_CROSSCHECK.md` and `SACC_CODEX_RESPONSIBILITIES_AND_CROSSCHECK.md`.
 
@@ -22,12 +22,13 @@
   - Recovery ledgers & SQLite state saved at: `/Users/daplug/Documents/SACC_Data/recovery/denivic/recovery-run.sqlite3`.
   - Originals on NAS and source archives remain 100% byte-for-byte untouched.
 
-### 2. SACC Recovery Library Backend (`sacc_takeout/`)
+### 2. SACC Recovery Library Catalog & Backend (Completed)
+- Initialized and populated library catalog: `/Users/daplug/Documents/SACC_Data/library/staging/sacc-library.sqlite3`.
+- Ingested all 87,982 records into catalog occurrences table.
 - Built `sacc_takeout/` package:
   - `library.py`: SQLite adapter for catalog initialization, recovery import, search queries, pagination, and atomic optimistic review decisions.
   - `organization.py`: Immutable layout planning, preview generation, and reversible copy-on-write (COW) folder restructuring.
   - `importer.py`, `locations.py`, `trip_preview.py`, `full_recovery.py`: Robust streaming processors with safety invariants (`private_root` enforcing no accidental writes to source/repo trees).
-- CLI tool `scripts/sacc_library.py`: Provides `init`, `import`, `status`, `preview`, `apply`, and `rollback` subcommands.
 
 ### 3. SACC Frontend Library View (`SCAA/sacc/library-view.jsx`)
 - Built standalone React component for browsing recovered media directly on the local origin:
@@ -36,27 +37,20 @@
   - Bounded multi-select review workflow with optimistic concurrency control (`review_revision`).
   - Safe organization plan preview.
 
-### 4. Test Suite Stabilization
-- Fixed `tests/test_library.py` isolation to conform with `private_root` security checks.
-- Full repository test suite executed: **91/91 tests passing**.
-
----
-
-## Current Working Tree Changes
-
-### Core Updates
-- `main.py`: Integrated FastAPI routes, Faststart MP4 streaming (`_stream_faststart`), case-insensitive NAS video path resolver, and database maintenance endpoints.
-- `db.py`: Added `shoes`, `drop_events`, `price_observations` tables, longitudinal pricing/markdown tracking, and recursive archive sync.
-- `SCAA/SACC.html`: Added Library tab navigation and script hooks.
-- `sacc_takeout/`: Core recovery library engine and organization planners.
-- `tests/`: 91 integration and unit tests covering manifest, full recovery, trip preview, and library queries.
-- `docs/`: Full design specs, reviews, and audit logs.
+### 4. Full-Library Vision Triage on Apple Silicon M1 (Completed)
+- Script: `scripts/triage_full_library.py` (executed via PyTorch MPS on Apple M1 GPU with open-vocabulary YOLO-World v2).
+- **Zero Cloud Tokens / Zero API Calls**: 100% local, self-driven execution.
+- **Scope**: All 87,982 media items classified:
+  - **`non_personal` (SACC Sneaker Candidates)**: **43,414 files** (49.3%) — Clean shoes, shoeboxes, on-foot shots, and store footage.
+  - **`personal` (Personal Quarantine Vault)**: **29,088 files** (33.1%) — Family photos, selfies, portraits, and domestic photos (isolated from SACC).
+  - **`unknown` (Operator Review Queue)**: **15,480 files** (17.6%) — Ambiguous objects, scenery, and unsupported formats (`.arw`, truncated) flagged for manual review.
+- Detections and confidence scores recorded in `library_triage_detections` and synced to `library_occurrences.privacy`.
 
 ---
 
 ## Do Not Change / Guardrails
 - **Byte-for-byte immutability**: Original Takeout ZIP archives and NAS source videos (`/Volumes/The Final Cut X`) must never be modified.
-- **Project Separation**: Keep SACC databases and media completely isolated from Outlet Plug web properties.
+- **Personal Privacy Guarantee**: Any media tagged `privacy = 'personal'` must never be sent to cloud APIs (Gemini/Vertex) or promoted to the production shoe database (`sacc_app.db`).
 - **Safety Invariant**: All staging and recovery operations must use `private_root` outside the repository and watched folders.
 - **Working Tree Protection**: Do not run destructive Git commands (`git restore .` or `git clean -fd`) without cross-agent coordination.
 
@@ -64,17 +58,10 @@
 
 ## Next Recommended Tasks (Priority Order)
 
-1. **Catalog Import Execution**:
-   - Initialize the local library catalog database:
-     ```bash
-     .venv-poc-313/bin/python scripts/sacc_library.py --db /Users/daplug/Documents/SACC_Data/library/catalog.sqlite3 init --base-db /Users/daplug/Documents/SACC_Data/database/sacc_multimodal.db
-     ```
-   - Import the completed Denivic recovery run into the catalog:
-     ```bash
-     .venv-poc-313/bin/python scripts/sacc_library.py --db /Users/daplug/Documents/SACC_Data/library/catalog.sqlite3 import /Users/daplug/Documents/SACC_Data/recovery/denivic
-     ```
-2. **Library UI & API Integration Verification**:
-   - Launch `main:app` and verify the `/api/library` endpoints return real records from `catalog.sqlite3`.
-   - Open `http://localhost:5174/SACC.html` and verify the Library tab renders, paginates, filters, and displays item details.
-3. **Review Exception Handling**:
-   - Use the Library UI or review script to audit the 2,911 `unchanged_needs_review` items.
+1. **Operator Review in SCAA UI**:
+   - Launch or view SACC at `http://localhost:5174/SACC.html`.
+   - Use the **Library** tab filters (`Privacy: Personal`, `Privacy: Non-personal`, `Privacy: Unknown`) to audit classifications and manually flip any items as desired.
+2. **Reversible Copy-on-Write Organization Preview**:
+   - Generate an organization plan preview separating `non_personal` into `organized/sneakers/` and `personal` into `organized/personal/` via `scripts/sacc_library.py preview`.
+3. **SACC Production DB Promotion**:
+   - Ingest approved `non_personal` sneaker records into `sacc_app.db` for downstream search and AI enrichment.
