@@ -75,6 +75,11 @@
 - Source copies, embedded previews, RAW renders and video derivatives are private local artifacts only. No media was viewed through a cloud service, uploaded, promoted, organized or assigned a new privacy decision. All 15 retain unknown privacy and existing failed triage records; the 12 JPEGs remain damaged and flagged.
 - Final verification: catalog and recovery-ledger SHA-256 unchanged; all 15 recovered hashes and identities unchanged; all three source ZIP identities unchanged (whole ZIPs were not rehashed). Gallery validation confirmed 15 cards and image references, all referenced files present and no remote URLs. No application code changed; no unit-test rerun was needed for this forensic inspection. No Anti-Gravity implementation approval or QA is claimed.
 
+### 8. Operator Privacy Review — First Three Exceptions (2026-11-02)
+- Nitty identified `APR05258(1).ARW` and `APR05259(1).ARW` as duplicate images of his shoe and `PXL_20221026_221151971.MP` as a zero-second Pixel video/picture of the shoe; all three are `non_personal`.
+- Saved each through the local Library review API as an explicit human privacy override, reviewer `Nitty`, with item-specific evidence. Verified all three review events and privacy projections. The video’s catalog `media_type` remains `unknown`; this action changed privacy only.
+- The remaining 12 damaged JPEGs and nine other exceptions remain unknown for privacy. The review page at `/Users/daplug/Documents/SACC_Data/library/media-exception-audit/2026-11-02/review.html` reflects the three human decisions. No media files, triage results, organization plan or production records were changed.
+
 ---
 
 ## Do Not Change / Guardrails
@@ -91,7 +96,7 @@
    - Open the private `media-exception-audit/2026-11-02/review.html` noted above. Do not repeat unchanged source comparisons. Keep the 12 damaged JPEGs flagged; seek better originals in other authorized local backups if available. RAW and video working previews are ready for local operator review. A separate engineering increment for RAW derivatives and verified `.MP` video recognition requires the normal design/review process before production changes.
 2. **Operator Review in SCAA UI**:
    - Launch or view SACC at `http://localhost:5174/SACC.html`.
-   - Use the **Library** tab filters (`Privacy: Personal`, `Privacy: Non-personal`, `Privacy: Unknown`) to audit classifications and manually flip any items as desired.
+   - Three exception privacy decisions are now saved. Continue a bounded audit using the **Library** tab filters (`Privacy: Personal`, `Privacy: Non-personal`, `Privacy: Unknown`), saving only labels the operator has reviewed.
 3. **Review Existing Copy-on-Write Organization Preview (generation complete)**:
    - Review the two plans recorded above; do not regenerate unchanged previews. Applying clones is a separate operator-authorized step, with current privacy/revision validation required first.
 4. **Separate future production increment**:
