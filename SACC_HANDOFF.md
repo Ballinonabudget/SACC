@@ -56,6 +56,16 @@
 - Live verification: SQLite `quick_check=ok`, zero foreign-key violations, 87,982 occurrences, 87,757 unique media, unchanged retained metadata/file locators/source history/PoC rows, zero hidden metadata warnings. There are 24,947 attention rows and 10,091 automatic audit events; these events do not count as human review.
 - Original media, recovery ledger, organization state and production shoe records were not modified. No external Antigravity review has been sent or claimed.
 
+### 6. Privacy-Separated Organization Preview (2026-11-02, completed; not applied)
+- Nitty selected the local organization preview. Used existing `LibraryDB.layout_rows` privacy filters and `organization.create_plan` with separate destination roots; no application code changed. The CLI's generic preview does not itself choose privacy-specific destination roots.
+- Preview overview: `/Users/daplug/Documents/SACC_Data/library/organization-plans/preview-2026-11-02/README.md`; machine-readable results and validation are in the adjacent `summary.json`.
+- `organized/sneakers/`: 43,542 automatic `non_personal` candidates (37,689 images, 5,853 videos), plan `4396b65d9ae41926b9f9feb34d27cae8bf77cbe1e65b6f18ac92a734314fe55a`.
+- `organized/personal/`: 29,181 `personal` occurrences (24,389 images, 4,792 videos), plan `4af0c802b593688132d874f24e8e9394521d3516c3fa08cd035987ec87b11a54`.
+- Both sealed plans are under `/Users/daplug/Documents/SACC_Data/library/organization-plans/<plan_id>/`. All 15,259 unknown occurrences remain excluded in the review queue. No held rows in either selected plan.
+- Verified plan digests, exact privacy membership, no overlap, all selected review revisions, absent output media, and same-filesystem APFS placement. Catalog file SHA-256 unchanged; zero organization links and zero remote eligibility. Only private plan artifacts and empty destination roots were created; no media cloned, copied, uploaded or promoted. Clonefile execution and full source-hash readback remain apply-time checks.
+- Before any separately authorized apply, revalidate current privacy membership as well as revisions: the generic plan does not continuously enforce its privacy bucket. Automatic labels remain suggestions, not human export/promotion approval.
+- Typesafe documentation research completed at Nitty's request; assessment and sources are in the preview folder's `TYPESAFE_EVALUATION.md`. Potential second-opinion experiment only; image support is experimental. No SDK, credential access, inference calls or uploads. No production integration or Anti-Gravity approval is claimed.
+
 ---
 
 ## Do Not Change / Guardrails
@@ -73,7 +83,7 @@
 2. **Operator Review in SCAA UI**:
    - Launch or view SACC at `http://localhost:5174/SACC.html`.
    - Use the **Library** tab filters (`Privacy: Personal`, `Privacy: Non-personal`, `Privacy: Unknown`) to audit classifications and manually flip any items as desired.
-3. **Reversible Copy-on-Write Organization Preview**:
-   - Generate an organization plan preview separating `non_personal` into `organized/sneakers/` and `personal` into `organized/personal/` via `scripts/sacc_library.py preview`.
+3. **Review Existing Copy-on-Write Organization Preview (generation complete)**:
+   - Review the two plans recorded above; do not regenerate unchanged previews. Applying clones is a separate operator-authorized step, with current privacy/revision validation required first.
 4. **Separate future production increment**:
    - Validate explicit human approval and promotion behavior before ingesting reviewed sneaker records into `sacc_app.db`. Automatic `non_personal` suggestions alone do not authorize cloud processing or promotion. Legacy price/date/drop synchronization defects remain outside this repair.
