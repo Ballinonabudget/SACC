@@ -65,6 +65,7 @@
 - Verified plan digests, exact privacy membership, no overlap, all selected review revisions, absent output media, and same-filesystem APFS placement. Catalog file SHA-256 unchanged; zero organization links and zero remote eligibility. Only private plan artifacts and empty destination roots were created; no media cloned, copied, uploaded or promoted. Clonefile execution and full source-hash readback remain apply-time checks.
 - Before any separately authorized apply, revalidate current privacy membership as well as revisions: the generic plan does not continuously enforce its privacy bucket. Automatic labels remain suggestions, not human export/promotion approval.
 - Typesafe documentation research completed at Nitty's request; assessment and sources are in the preview folder's `TYPESAFE_EVALUATION.md`. Potential second-opinion experiment only; image support is experimental. No SDK, credential access, inference calls or uploads. No production integration or Anti-Gravity approval is claimed.
+- **Operator decision (2026-11-02): do not use Typesafe for SACC.** Retain the assessment as research history only; no pilot or integration is planned. Continue with local triage and operator review.
 
 ---
 
