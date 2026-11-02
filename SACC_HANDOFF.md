@@ -89,6 +89,7 @@
 - Nitty reviewed the eight item sample in `/Users/daplug/Documents/SACC_Data/library/media-exception-audit/2026-11-02/non-personal-sample-8/`: positions 3 and 5 were marked `personal`; positions 1, 2, 4, 6, 7 and 8 were marked `non_personal`.
 - Saved the eight labels as human-reviewed privacy overrides through the local Library API, reviewer `Nitty`, with evidence for the full sample decision. Verified current privacy values, revision increments, and reviewed privacy source. Updated the private manifest and review page.
 - These decisions cover only these eight records; no model labels, media files, organization plans or production records changed.
+- **Terminology set for this database:** “SACC”, “content”, or “SACC content” means include; “personal” means exclude. The six reviewed inclusion decisions remain stored in the existing Library `privacy='non_personal'` field for compatibility, with human-review evidence. This terminology clarification did not change app choices/schema or promote records to `sacc_app.db`. Defer other categories until needed; explain “non-personal” as legacy internal wording, not the operator-facing inclusion label.
 
 ---
 
