@@ -67,6 +67,14 @@
 - Typesafe documentation research completed at Nitty's request; assessment and sources are in the preview folder's `TYPESAFE_EVALUATION.md`. Potential second-opinion experiment only; image support is experimental. No SDK, credential access, inference calls or uploads. No production integration or Anti-Gravity approval is claimed.
 - **Operator decision (2026-11-02): do not use Typesafe for SACC.** Retain the assessment as research history only; no pilot or integration is planned. Continue with local triage and operator review.
 
+### 7. Remaining Media Exception Investigation (2026-11-02, completed; no catalog changes)
+- Investigated all 15 failed occurrences against their exact ZIP members on the NAS, opened read-only. Private evidence and report: `/Users/daplug/Documents/SACC_Data/library/media-exception-audit/2026-11-02/README.md`; offline operator gallery: adjacent `review.html`.
+- **12 JPEGs:** ZIP CRC and recorded original source SHA-256 verified. Source and recovered files both fail strict Pillow/libjpeg decoding; first JPEG scan marker through EOF is byte-identical. Sources lack an end-of-image marker in that payload and end with about 1.0–4.8 MB of zero bytes. Recovery did not introduce this damage. Only 160x120 embedded thumbnails were recoverable. Same-name/media-hash and filename-stem catalog searches found no healthy replacements; other backups remain unsearched.
+- **2 Sony RAW files:** source and recovered bytes match. Extracted strict-decodable 1920x1080 embedded previews and generated separate strict-decodable 6000x4000 JPEG renders with macOS `sips`. Same-stem, same-capture-time counterparts already in the catalog contain JPEG data despite `.ARW` filenames and decode at 4898x3265. Neither previews nor rendering establish complete RAW sensor-data integrity.
+- **1 `.MP` file:** confirmed as a short HEVC video; both video streams decode successfully. Primary stream is 1920x1080, about 0.998 seconds. Saved a byte-identical `.mp4` working copy and a separate frame. A likely same-stem JPEG companion exists; no automatic association or merge was performed. The catalog's unknown media type reflects an extension-recognition gap.
+- Source copies, embedded previews, RAW renders and video derivatives are private local artifacts only. No media was viewed through a cloud service, uploaded, promoted, organized or assigned a new privacy decision. All 15 retain unknown privacy and existing failed triage records; the 12 JPEGs remain damaged and flagged.
+- Final verification: catalog and recovery-ledger SHA-256 unchanged; all 15 recovered hashes and identities unchanged; all three source ZIP identities unchanged (whole ZIPs were not rehashed). Gallery validation confirmed 15 cards and image references, all referenced files present and no remote URLs. No application code changed; no unit-test rerun was needed for this forensic inspection. No Anti-Gravity implementation approval or QA is claimed.
+
 ---
 
 ## Do Not Change / Guardrails
@@ -79,8 +87,8 @@
 
 ## Next Recommended Tasks (Priority Order)
 
-1. **Resolve the 15 remaining media exceptions**:
-   - Compare the truncated JPEGs with the original Takeout sources before considering a separate recovered copy; use a supported local preview decoder for RAW files and inspect the unknown type. Keep originals and the verified catalog backup intact.
+1. **Review Diagnosed Media Exceptions (source investigation complete)**:
+   - Open the private `media-exception-audit/2026-11-02/review.html` noted above. Do not repeat unchanged source comparisons. Keep the 12 damaged JPEGs flagged; seek better originals in other authorized local backups if available. RAW and video working previews are ready for local operator review. A separate engineering increment for RAW derivatives and verified `.MP` video recognition requires the normal design/review process before production changes.
 2. **Operator Review in SCAA UI**:
    - Launch or view SACC at `http://localhost:5174/SACC.html`.
    - Use the **Library** tab filters (`Privacy: Personal`, `Privacy: Non-personal`, `Privacy: Unknown`) to audit classifications and manually flip any items as desired.
