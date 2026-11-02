@@ -80,6 +80,11 @@
 - Saved each through the local Library review API as an explicit human privacy override, reviewer `Nitty`, with item-specific evidence. Verified all three review events and privacy projections. The video’s catalog `media_type` remains `unknown`; this action changed privacy only.
 - The remaining 12 damaged JPEGs and nine other exceptions remain unknown for privacy. The review page at `/Users/daplug/Documents/SACC_Data/library/media-exception-audit/2026-11-02/review.html` reflects the three human decisions. No media files, triage results, organization plan or production records were changed.
 
+### 9. Operator Privacy Review — Eight Unknown Sample Items (2026-11-02)
+- Nitty reviewed all eight items in `/Users/daplug/Documents/SACC_Data/library/media-exception-audit/2026-11-02/unknown-sample-8/` (four photos, four videos) and classified every item `personal`.
+- Saved as human-reviewed privacy overrides through the local Library API, reviewer `Nitty`, with a shared evidence note recording the review of positions 1–8. All eight API results verified as `personal` with reviewed privacy source. Updated the local sample manifest and gallery to reflect the decisions.
+- This decision applies only to the eight selected records; other Unknown catalog items are unchanged. Original media, triage detections, organization plans and production records were not changed.
+
 ---
 
 ## Do Not Change / Guardrails
