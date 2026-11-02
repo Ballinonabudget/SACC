@@ -5,7 +5,8 @@
 - **Active Branch**: `codex/takeout-recovery-m1`
 - **Remote**: `git@github.com:Ballinonabudget/SACC.git`
 - **Active Environment**: macOS Apple Silicon M1, Python 3.13.15 virtualenv (`.venv-poc-313`)
-- **Last Verified Test Run**: 91 of 91 unit tests passing (`PYTHONPATH=tests:. .venv-poc-313/bin/python -m unittest discover tests`)
+- **Last Verified Test Run**: 106 of 106 unit tests passing (`PYTHONPATH=tests:. .venv-poc-313/bin/python -m unittest discover tests`), including 15 focused triage/Library regressions.
+- **Latest Local Repair**: `9a80000` plus the accompanying handoff update; committed locally, not pushed. The app on port 5174 is running the repaired code.
 - **Coordination Protocols**: Defined in `SACC_ANTIGRAVITY_RESPONSIBILITIES_AND_CROSSCHECK.md` and `SACC_CODEX_RESPONSIBILITIES_AND_CROSSCHECK.md`.
 
 ---
@@ -37,14 +38,23 @@
   - Bounded multi-select review workflow with optimistic concurrency control (`review_revision`).
   - Safe organization plan preview.
 
-### 4. Full-Library Vision Triage on Apple Silicon M1 (Completed)
+### 4. Full-Library Vision Triage on Apple Silicon M1 (Automatic suggestions)
 - Script: `scripts/triage_full_library.py` (executed via PyTorch MPS on Apple M1 GPU with open-vocabulary YOLO-World v2).
-- **Zero Cloud Tokens / Zero API Calls**: 100% local, self-driven execution.
-- **Scope**: All 87,982 media items classified:
-  - **`non_personal` (SACC Sneaker Candidates)**: **43,414 files** (49.3%) — Clean shoes, shoeboxes, on-foot shots, and store footage.
-  - **`personal` (Personal Quarantine Vault)**: **29,088 files** (33.1%) — Family photos, selfies, portraits, and domestic photos (isolated from SACC).
-  - **`unknown` (Operator Review Queue)**: **15,480 files** (17.6%) — Ambiguous objects, scenery, and unsupported formats (`.arw`, truncated) flagged for manual review.
-- Detections and confidence scores recorded in `library_triage_detections` and synced to `library_occurrences.privacy`.
+- **Local execution**: Repair retries used existing model weights with external networking blocked. No media was uploaded.
+- **Current detections after repair**: 43,542 `non_personal`, 29,181 `personal`, 15,244 `unknown`, and 15 `error`; total 87,982. Effective privacy is `unknown` for errors, giving 15,259 unknown privacy labels.
+- These are model suggestions, not reviewed privacy decisions or promotion approvals. Human privacy reviews remain zero; `remote_eligible` remains zero throughout the catalog. Labels describe catalog rows, not a completed physical folder organization.
+- Original triage recorded 284 failures and marked 14 trailing items unknown without inference. All 298 were retried once: 283 succeeded, including all 14 tail items; 15 remained failed.
+- Remaining failures already existed before this repair: 12 JPEGs report truncated image data, two Sony RAW files are unsupported by this decoder, and one occurrence has unknown media type. Keep them flagged for source comparison or a supported preview workflow; never overwrite originals to force inference.
+
+### 5. Focused Catalog Safeguard Repair (2026-11-01, completed locally)
+- See `docs/SACC_TRIAGE_REPAIR.md` for scope, commands, validation and rollback.
+- Verified before-repair backup: `/Users/daplug/Documents/SACC_Data/backups/library-before-safeguards-2026-11-01_223312_EST/sacc-library.sqlite3`.
+- Restored 9,611 hidden metadata warnings; 9,793 rows had attention projections corrected overall. The earlier 2,150 count covered only the `unchanged_needs_review` subset. The projection repair itself changed zero privacy labels.
+- Machine suggestions survive note edits/source refresh; explicit human privacy overrides take precedence. Metadata concerns and triage uncertainty both retain attention. The UI identifies automatic suggestions separately from human decisions.
+- Failed/pending items can be retried; partial batches are actually inferred; per-file failures are isolated. Attempts, policy/model/source identity and audit events are retained.
+- Canonical path guards now cover relative, symlink, stored and default paths in legacy media/ingestion routes, including backup/calibration/validation copies.
+- Live verification: SQLite `quick_check=ok`, zero foreign-key violations, 87,982 occurrences, 87,757 unique media, unchanged retained metadata/file locators/source history/PoC rows, zero hidden metadata warnings. There are 24,947 attention rows and 10,091 automatic audit events; these events do not count as human review.
+- Original media, recovery ledger, organization state and production shoe records were not modified. No external Antigravity review has been sent or claimed.
 
 ---
 
@@ -58,10 +68,12 @@
 
 ## Next Recommended Tasks (Priority Order)
 
-1. **Operator Review in SCAA UI**:
+1. **Resolve the 15 remaining media exceptions**:
+   - Compare the truncated JPEGs with the original Takeout sources before considering a separate recovered copy; use a supported local preview decoder for RAW files and inspect the unknown type. Keep originals and the verified catalog backup intact.
+2. **Operator Review in SCAA UI**:
    - Launch or view SACC at `http://localhost:5174/SACC.html`.
    - Use the **Library** tab filters (`Privacy: Personal`, `Privacy: Non-personal`, `Privacy: Unknown`) to audit classifications and manually flip any items as desired.
-2. **Reversible Copy-on-Write Organization Preview**:
+3. **Reversible Copy-on-Write Organization Preview**:
    - Generate an organization plan preview separating `non_personal` into `organized/sneakers/` and `personal` into `organized/personal/` via `scripts/sacc_library.py preview`.
-3. **SACC Production DB Promotion**:
-   - Ingest approved `non_personal` sneaker records into `sacc_app.db` for downstream search and AI enrichment.
+4. **Separate future production increment**:
+   - Validate explicit human approval and promotion behavior before ingesting reviewed sneaker records into `sacc_app.db`. Automatic `non_personal` suggestions alone do not authorize cloud processing or promotion. Legacy price/date/drop synchronization defects remain outside this repair.
