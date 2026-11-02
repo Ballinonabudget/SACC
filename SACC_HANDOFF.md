@@ -85,6 +85,11 @@
 - Saved as human-reviewed privacy overrides through the local Library API, reviewer `Nitty`, with a shared evidence note recording the review of positions 1–8. All eight API results verified as `personal` with reviewed privacy source. Updated the local sample manifest and gallery to reflect the decisions.
 - This decision applies only to the eight selected records; other Unknown catalog items are unchanged. Original media, triage detections, organization plans and production records were not changed.
 
+### 10. Operator Review — Eight Automatic Non-Personal Suggestions (2026-11-02)
+- Nitty reviewed the eight item sample in `/Users/daplug/Documents/SACC_Data/library/media-exception-audit/2026-11-02/non-personal-sample-8/`: positions 3 and 5 were marked `personal`; positions 1, 2, 4, 6, 7 and 8 were marked `non_personal`.
+- Saved the eight labels as human-reviewed privacy overrides through the local Library API, reviewer `Nitty`, with evidence for the full sample decision. Verified current privacy values, revision increments, and reviewed privacy source. Updated the private manifest and review page.
+- These decisions cover only these eight records; no model labels, media files, organization plans or production records changed.
+
 ---
 
 ## Do Not Change / Guardrails
