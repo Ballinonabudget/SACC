@@ -32,7 +32,7 @@ from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 
@@ -66,9 +66,14 @@ except ImportError:
     _VALIDATOR_OK = False
 
 from app_db import AppDB
+from sacc_takeout.library_paths import unprotected_path, ProtectedLibraryPath
 
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(title="SACC API", version="3.0")
+
+@app.exception_handler(ProtectedLibraryPath)
+async def protected_library_path_error(request, exc):
+    return JSONResponse({'detail':str(exc)}, status_code=403)
 
 app.add_middleware(
     CORSMiddleware,
@@ -96,6 +101,7 @@ except Exception as _poc_exc:
 
 
 def _get_db(folder: str) -> "SACCDB":
+    unprotected_path(folder)
     db_path = os.path.join(folder, "sacc.db")
     if db_path not in _db_cache:
         _db_cache[db_path] = SACCDB(db_path)
@@ -103,6 +109,7 @@ def _get_db(folder: str) -> "SACCDB":
 
 
 def _pipeline_db(db_param: str) -> sqlite3.Connection:
+    if db_param:unprotected_path(db_param)
     if not db_param or not os.path.exists(db_param):
         raise HTTPException(404, f"DB not found: {db_param}")
     con = sqlite3.connect(db_param, timeout=10)
@@ -167,15 +174,16 @@ def resolve_nlp(text: str) -> dict:
 
 
 def _load_json_db(folder: str) -> tuple:
-    json_dir = os.path.join(folder, "json")
+    json_dir = str(unprotected_path(Path(folder)/'json'))
     records: list = []
     if not os.path.isdir(json_dir):
         return records, json_dir
     for f in sorted(os.listdir(json_dir)):
         if not f.endswith(".json"):
             continue
+        checked = unprotected_path(Path(json_dir)/f)
         try:
-            with open(os.path.join(json_dir, f)) as fh:
+            with open(checked) as fh:
                 data = json.load(fh)
             data["_json_file"] = f
             data["_json_path"] = os.path.join(json_dir, f)
@@ -354,7 +362,7 @@ async def patch_json_db(request: Request):
     stem = body.get("stem", "")
     if not folder or not stem:
         raise HTTPException(400, "path and stem required")
-    json_path = os.path.join(folder, "json", f"{stem}.json")
+    json_path = str(unprotected_path(Path(folder)/'json'/f'{stem}.json'))
     if not os.path.exists(json_path):
         raise HTTPException(404, f"JSON not found: {json_path}")
     with open(json_path) as fh:
@@ -391,6 +399,7 @@ def apply_location(body: ApplyLocationBody):
 
 @app.get("/api/whitelist")
 def whitelist(path: str = Query(os.path.join(os.path.dirname(os.path.abspath(__file__)), "whitelist.json"))):
+    path = str(unprotected_path(path))
     if not os.path.exists(path):
         raise HTTPException(404, f"Not found: {path}")
     with open(path) as fh:
@@ -692,6 +701,7 @@ async def db_sync_archive(request: Request):
     settings = _app_db.get_settings()
     hub  = body.get("hub")  or settings.get("archive_db_folder", "")
     root = body.get("root") or settings.get("archive_root", "")
+    if root:unprotected_path(root)
     if not hub or not os.path.isdir(hub):
         raise HTTPException(404, f"Hub folder not found: {hub or '<archive_db_folder unset>'}")
     if not root or not os.path.isdir(root):
@@ -901,7 +911,7 @@ def pipeline_open(body: PipelineOpenBody):
         ).fetchone()
         if not row or not row["asset_url"]:
             raise HTTPException(404, f"No asset_url for {body.original_file_id}")
-        path = row["asset_url"]
+        path = str(unprotected_path(row["asset_url"]))
         if not os.path.exists(path):
             raise HTTPException(404, f"File not found at {path}")
         subprocess.Popen(["open", "-R", path])
@@ -1067,11 +1077,11 @@ def _stream_faststart(path: Path, layout: dict):
 def reveal_in_finder(body: RevealBody):
     if not body.path:
         raise HTTPException(400, "path required")
-    safe_dir = Path(body.path).resolve()
+    safe_dir = unprotected_path(body.path)
     if not safe_dir.is_dir():
         raise HTTPException(404, f"Folder not found: {body.path}")
     if body.file:
-        target = (safe_dir / Path(body.file).name).resolve()
+        target = unprotected_path(safe_dir / Path(body.file).name)
         if target.parent == safe_dir and target.is_file():
             subprocess.Popen(["open", "-R", str(target)])
             return {"ok": True, "revealed": str(target)}
@@ -1083,8 +1093,8 @@ def reveal_in_finder(body: RevealBody):
 def serve_video(path: str = Query(""), file: str = Query("")):
     if not path or not file:
         raise HTTPException(400, "path and file required")
-    safe_dir = Path(path).resolve()
-    safe_file = (safe_dir / Path(file).name).resolve()
+    safe_dir = unprotected_path(path)
+    safe_file = unprotected_path(safe_dir / Path(file).name)
     if safe_file.parent != safe_dir:
         raise HTTPException(403, "Path traversal denied")
 
@@ -1105,7 +1115,7 @@ def serve_video(path: str = Query(""), file: str = Query("")):
                 match = candidate  # any video ext — keep looking for better match
         if match is None:
             raise HTTPException(404, f"File not found: {file}")
-        safe_file = match
+        safe_file = unprotected_path(match)
 
     # Parse MP4 box layout to detect moov position
     layout = _parse_mp4_layout(safe_file)
@@ -1272,8 +1282,8 @@ def clear_error_history():
 def serve_nas_media(media_path: str):
     """Serve images from NAS media store for F+G prototype."""
     NAS_MEDIA_ROOT = Path("/Volumes/Team Bank 12/SACC/nas-media")
-    safe = (NAS_MEDIA_ROOT / media_path).resolve()
-    if not str(safe).startswith(str(NAS_MEDIA_ROOT.resolve())):
+    safe = unprotected_path(NAS_MEDIA_ROOT / media_path)
+    if not safe.is_relative_to(NAS_MEDIA_ROOT.resolve()):
         raise HTTPException(403, "Path traversal denied")
     if not safe.is_file():
         raise HTTPException(404, f"Media not found: {media_path}")

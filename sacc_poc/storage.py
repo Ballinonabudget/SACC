@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Optional
+from sacc_takeout.library_paths import unprotected_path
 
 
 MEDIA_TYPES = {
@@ -67,7 +68,7 @@ class StorageAdapter(ABC):
         recursive: bool = True,
         limit: int = 0,
     ) -> Iterator[StoredAsset]:
-        base = self.resolve(prefix)
+        base = unprotected_path(self.resolve(prefix))
         if not base.exists():
             raise FileNotFoundError(f"storage path not found: {base}")
         paths = [base] if base.is_file() else (base.rglob("*") if recursive else base.glob("*"))
@@ -78,6 +79,7 @@ class StorageAdapter(ABC):
             media_type = MEDIA_TYPES.get(path.suffix.lower())
             if not media_type:
                 continue
+            unprotected_path(path)
             mime_type = mimetypes.guess_type(path.name)[0]
             if not mime_type:
                 mime_type = "video/mp4" if media_type == "video" else "image/jpeg"

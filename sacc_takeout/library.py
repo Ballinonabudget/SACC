@@ -13,6 +13,7 @@ from .common import canonical, child, file_hash, no_symlinks, private_root, run_
 from .full_recovery import _plan, _projection
 from .recovery_store import open_ledger, sync_dir
 from .locations import validate_directory
+from .library_projection import projection, triage_record
 
 DEFAULT_ROOT = Path.home()/'Documents/SACC_Data/library/staging'
 DEFAULT_RECOVERY = Path.home()/'Documents/SACC_Data/recovery/denivic'
@@ -171,11 +172,11 @@ class LibraryDB:
                     overrides=json.loads(previous['overrides_json']) if previous else {}
                     effective=overrides.get('capture_date',day);date_trusted=bool(overrides.get('capture_date')) or trusted
                     screenshot=overrides.get('screenshot',result['media_subtype']=='screenshot')
-                    privacy=overrides.get('privacy','unknown');store=overrides.get('store')
+                    projected=projection(raw,out['embedding_status'],overrides,triage_record(con,row['id']))
+                    privacy=projected['privacy'];store=overrides.get('store')
                     if store and not self._store_compatible(con,store,effective,date_trusted,overrides.get('historical_evidence')):
                         store=None;overrides.pop('store',None)
-                    attention=out['embedding_status']=='unchanged_needs_review' or bool(set(result['review_reasons']) &
-                        {'date_conflict','gps_conflict','gps_invalid','invalid_embedded_date','detected_media_type_mismatch','unknown_media_format','capture_date_missing'})
+                    attention=projected['needs_attention']
                     changed=bool(previous and (previous['raw_json']!=canonical(raw) or previous['overrides_json']!=canonical(overrides)))
                     revision=previous['review_revision']+int(changed) if previous else 0
                     values={'id':row['id'],'media_id':row['media_id'],'import_id':import_id,'plan_id':plan['plan_id'],
@@ -238,8 +239,8 @@ class LibraryDB:
             where.append('substr(o.effective_date,6,2)=?');args.append(f'{int(month):02d}')
         review=f.get('review','all')
         if review=='attention':where.append('o.needs_attention=1')
-        elif review=='annotated':where.append('o.review_revision>0')
-        elif review=='unreviewed':where.append('o.review_revision=0')
+        elif review=='annotated':where.append("o.overrides_json!='{}'")
+        elif review=='unreviewed':where.append("o.overrides_json='{}'")
         elif review not in ('all','',None):raise ValueError('Invalid review filter')
         gps=f.get('gps','all')
         if gps=='present':where.append('o.gps_lat IS NOT NULL')
@@ -258,6 +259,8 @@ class LibraryDB:
     @staticmethod
     def _summary(con,row):
         r=dict(row);raw=json.loads(r['raw_json']);store=None
+        overrides=json.loads(r['overrides_json'])
+        projected=projection(raw,r['embedding_status'],overrides,triage_record(con,r['id']))
         if r['store_version_id']:
             s=con.execute('SELECT id,code,label FROM library_stores WHERE id=?',(r['store_version_id'],)).fetchone()
             store=dict(s) if s else None
@@ -265,8 +268,9 @@ class LibraryDB:
                 'mime_type':r['mime_type'],'capture_date':r['effective_date'],'capture_utc':r['capture_utc'],
                 'date_basis':r['date_basis'],'date_trusted':bool(r['date_trusted']),'has_gps':r['gps_lat'] is not None,
                 'gps_requirement':'not_expected_screenshot' if r['screenshot'] else 'expected','store':store,
-                'privacy':r['privacy'],'screenshot':bool(r['screenshot']),'review_revision':r['review_revision'],
-                'review_status':'annotated' if r['review_revision'] else 'attention' if r['needs_attention'] else 'unreviewed',
+                'privacy':r['privacy'],'privacy_source':projected['privacy_source'],
+                'screenshot':bool(r['screenshot']),'review_revision':r['review_revision'],
+                'review_status':'attention' if r['needs_attention'] else 'annotated' if overrides else 'unreviewed',
                 'review_reasons':raw['review_reasons'],'embedding_status':r['embedding_status'],
                 'asset_url':'/api/library/assets/'+r['id'],
                 'preview_supported':r['mime_type'] in {'image/jpeg','image/png','image/gif','image/webp','video/mp4','video/quicktime'}}
@@ -356,8 +360,9 @@ class LibraryDB:
                 shot=over.get('screenshot',raw.get('media_subtype')=='screenshot')
                 if shot and row['media_type']!='image':raise ValueError('Only images may be confirmed screenshots')
                 revision=row['review_revision']+1
-                con.execute('UPDATE library_occurrences SET overrides_json=?,effective_date=?,date_trusted=?,date_basis=?,screenshot=?,privacy=?,store_version_id=?,review_revision=?,search_text=? WHERE id=?',
-                    (canonical(over),day,int(trusted),'reviewed_calendar' if over.get('capture_date') else 'source_utc' if row['capture_utc'] else 'unknown',int(shot),over.get('privacy','unknown'),store,revision,self._search_text(row['original_path'],raw,over,con,store),row['id']))
+                projected=projection(raw,row['embedding_status'],over,triage_record(con,row['id']))
+                con.execute('UPDATE library_occurrences SET overrides_json=?,effective_date=?,date_trusted=?,date_basis=?,screenshot=?,privacy=?,needs_attention=?,store_version_id=?,review_revision=?,search_text=? WHERE id=?',
+                    (canonical(over),day,int(trusted),'reviewed_calendar' if over.get('capture_date') else 'source_utc' if row['capture_utc'] else 'unknown',int(shot),projected['privacy'],projected['needs_attention'],store,revision,self._search_text(row['original_path'],raw,over,con,store),row['id']))
                 con.execute('INSERT INTO library_review_events(occurrence_id,revision,action,value_json,reviewer,evidence,details_json) VALUES(?,?,?,?,?,?,?)',
                             (row['id'],revision,action,canonical(value),reviewer,evidence,canonical(details)))
                 updated.append(self._summary(con,con.execute('SELECT * FROM library_occurrences WHERE id=?',(row['id'],)).fetchone()))

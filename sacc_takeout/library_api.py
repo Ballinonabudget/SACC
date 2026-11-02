@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from .library import LibraryDB, StaleReview, DEFAULT_ROOT, DEFAULT_RECOVERY
+from .library_paths import unprotected_path, ProtectedLibraryPath
 
 
 class LocalLibraryGuard:
@@ -35,7 +36,7 @@ class LocalLibraryGuard:
                 return await JSONResponse({'detail':'Same-origin library access required'},403)(scope,receive,send)
         if scope['path'].startswith('/api/') and not scope['path'].startswith('/api/library'):
             from urllib.parse import parse_qs
-            values=list(parse_qs(scope.get('query_string',b'').decode()).values())
+            values=parse_qs(scope.get('query_string',b'').decode())
             payload=[]
             if b'application/json' in headers.get(b'content-type',b''):
                 body=b''
@@ -53,19 +54,20 @@ class LocalLibraryGuard:
                     return await receive()
                 next_receive=replay
             else:next_receive=receive
-            def strings(v):
-                if isinstance(v,str):yield v
+            def strings(v,key=''):
+                if isinstance(v,str):yield key,v
                 elif isinstance(v,dict):
-                    for x in v.values():yield from strings(x)
+                    for k,x in v.items():yield from strings(x,k)
                 elif isinstance(v,list):
-                    for x in v:yield from strings(x)
-            roots=[DEFAULT_RECOVERY.parent,DEFAULT_ROOT.parent,LibraryDB().path.parent]
-            roots.extend(Path(p) for p in os.getenv('SACC_LIBRARY_PROTECTED_ROOTS','').split(os.pathsep) if p)
-            for value in strings([values,payload]):
-                if not value.startswith(('/','~')):continue
-                path=Path(value).expanduser().resolve()
-                if any(path==r.resolve() or path.is_relative_to(r.resolve()) or r.resolve().is_relative_to(path) for r in roots):
+                    for x in v:yield from strings(x,key)
+            path_keys={'path','root','folder','hub','db','db_path','prefix','source_path','folder_path','archive_root','archive_db_folder'}
+            for key,value in strings([values,payload]):
+                if not value or not (key in path_keys or '/' in value or value.startswith('~')):continue
+                try:unprotected_path(value)
+                except ProtectedLibraryPath:
                     return await JSONResponse({'detail':'Use the protected Library API for recovery data'},403)(scope,receive,send)
+                except (ValueError,OSError,RuntimeError):
+                    return await JSONResponse({'detail':'Invalid file path'},400)(scope,receive,send)
             return await self.app(scope,next_receive,send)
         return await self.app(scope,receive,send)
 

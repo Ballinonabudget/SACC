@@ -143,7 +143,7 @@ function LibraryDetail({data,loading,error,onClose,onSelect,stores,api,onSaved,o
           <dt>Store branch</dt><dd>{item.store?.label||'Not confirmed'}{item.store?.code&&<small>{item.store.code}</small>}</dd>
           <dt>Observed GPS</dt><dd>{item.gps_requirement==='not_expected_screenshot'?'Not expected · confirmed screenshot':item.has_gps?'Source observation available':'No selected observation'}
             {typeof gps?.latitude==='number'&&typeof gps?.longitude==='number'&&<small>{gps.latitude.toFixed(6)}, {gps.longitude.toFixed(6)}<br/>{gps.accuracy_m==null?'Accuracy not supplied':`Supplied accuracy: ${gps.accuracy_m} m`}</small>}</dd>
-          <dt>Privacy</dt><dd>{libraryLabel(item.privacy||'unknown')}<small>Local only · no remote eligibility</small></dd>
+          <dt>Privacy</dt><dd>{libraryLabel(item.privacy||'unknown')}<small>{item.privacy_source==='reviewed'?'Your reviewed label':item.privacy_source==='automatic'?'Automatic suggestion · needs your review':'Not yet classified'} · local only</small></dd>
           <dt>Record review</dt><dd>{libraryLabel(item.review_status)||'Unreviewed'}</dd>
           <dt>Original path</dt><dd className="sl-path">{item.original_path||item.original_name}</dd>
         </dl>

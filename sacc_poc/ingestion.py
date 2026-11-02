@@ -13,6 +13,7 @@ from .catalog import enrich_catalog
 from .gemini import GeminiDispatcher, ShoeIdentification
 from .storage import StorageAdapter, StoredAsset
 from .transcode import AsyncFFmpegTranscoder, ProxyConfig, ensure_dispatchable
+from sacc_takeout.library_paths import unprotected_path
 
 
 ProgressCallback = Callable[[dict], None]
@@ -70,6 +71,7 @@ class IngestionService:
                 progress(event)
 
         async def process(asset: StoredAsset) -> None:
+            unprotected_path(asset.physical_path)
             token = _asset_token(asset)
             try:
                 is_prepared = prepared or any(

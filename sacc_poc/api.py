@@ -15,6 +15,7 @@ from .database import MultimodalDB
 from .ingestion import IngestionService
 from .storage import LocalStorageAdapter, NASStorageAdapter, adapter_from_env
 from .transcode import ProxyConfig
+from sacc_takeout.library_paths import unprotected_path
 
 
 router = APIRouter(prefix="/api/v1", tags=["multi-modal-poc"])
@@ -62,7 +63,7 @@ def asset_file(asset_id: int):
     asset = _db.get_asset(asset_id)
     if not asset:
         raise HTTPException(404, f"asset not found: {asset_id}")
-    path = Path(asset["file_path"]).expanduser().resolve()
+    path = unprotected_path(asset["file_path"])
     if not path.is_file():
         raise HTTPException(404, f"asset file is unavailable: {asset_id}")
     return FileResponse(
@@ -111,6 +112,7 @@ async def _run_ingest(job_id: str, body: IngestBody) -> None:
 
 @router.post("/ingest", status_code=202)
 async def start_ingest(body: IngestBody):
+    unprotected_path(adapter_from_env(body.backend).resolve(body.prefix))
     job_id = str(uuid.uuid4())
     _jobs[job_id] = {
         "id": job_id,
