@@ -111,6 +111,11 @@
 - Saved these eight labels as human-reviewed local Library privacy decisions with evidence, reviewer `Nitty`, and updated the private manifest/gallery. All eight results and revisions verified.
 - Production promotion was not performed.
 
+### 15. Operator Review — Sixth SACC Content Sample (2026-11-02)
+- Nitty reviewed batch 6 in `/Users/daplug/Documents/SACC_Data/library/media-exception-audit/2026-11-02/non-personal-sample-8-batch-6/`: item 1 Personal; items 2–8 SACC content.
+- Saved these eight labels as human-reviewed local Library privacy decisions with evidence, reviewer `Nitty`, and updated the private manifest/gallery. All eight results and revisions verified.
+- Production promotion was not performed.
+
 ---
 
 ## Do Not Change / Guardrails
