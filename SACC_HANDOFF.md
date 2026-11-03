@@ -121,6 +121,12 @@
 - Saved these eight labels as human-reviewed local Library privacy decisions with evidence, reviewer `Nitty`, and updated the private manifest/gallery. All eight results and revisions verified.
 - Production promotion was not performed.
 
+### 17. Operator Review — Eighth SACC Content Sample and 64-Item Checkpoint (2026-11-02)
+- Nitty reviewed batch 8 in `/Users/daplug/Documents/SACC_Data/library/media-exception-audit/2026-11-02/non-personal-sample-8-batch-8/`: items 1, 2, 4–7 SACC content; item 3 Personal. Item 8 was not specified, so it was conservatively recorded as Unknown pending clarification.
+- Saved all eight as human-reviewed local Library privacy decisions, reviewer `Nitty`, and updated the private manifest/gallery. All eight results and revisions verified.
+- Across the first 64 balanced photo/video sample items, the recorded decisions are 53 SACC content, 7 Personal and 4 Unknown. This small deterministic review sample is an operator audit, not an accuracy estimate for the full library.
+- Production promotion was not performed.
+
 ---
 
 ## Do Not Change / Guardrails
