@@ -127,6 +127,11 @@
 - Across the first 64 balanced photo/video sample items, the recorded decisions are 53 SACC content, 7 Personal and 4 Unknown. This small deterministic review sample is an operator audit, not an accuracy estimate for the full library.
 - Production promotion was not performed.
 
+### 18. Operator Review — Ninth SACC Content Sample (2026-11-02)
+- Nitty reviewed batch 9 in `/Users/daplug/Documents/SACC_Data/library/media-exception-audit/2026-11-02/non-personal-sample-8-batch-9/`: items 1–6 and 8 SACC content; item 7 Personal.
+- Saved these eight labels as human-reviewed local Library privacy decisions with evidence, reviewer `Nitty`, and updated the private manifest/gallery. All eight results and revisions verified.
+- Production promotion was not performed.
+
 ---
 
 ## Do Not Change / Guardrails
