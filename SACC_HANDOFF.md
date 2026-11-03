@@ -162,6 +162,11 @@
 - Saved these eight labels as human-reviewed local Library privacy decisions with evidence, reviewer `Nitty`, and updated the private manifest/gallery. All eight results and revisions verified.
 - Production promotion was not performed.
 
+### 25. Operator Review — Sixteenth SACC Content Sample (2026-11-02)
+- Nitty identified items 1 and 8 in batch 16 as SACC content; items 2–7 were not specified and were conservatively recorded as Unknown pending clarification.
+- Saved all eight as human-reviewed local Library privacy decisions, reviewer `Nitty`, and updated the private manifest/gallery. All eight results and revisions verified.
+- Production promotion was not performed.
+
 ---
 
 ## Do Not Change / Guardrails
