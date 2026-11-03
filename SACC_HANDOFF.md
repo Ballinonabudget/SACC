@@ -96,6 +96,11 @@
 - Saved the labels as human-reviewed local Library privacy decisions with evidence, reviewer `Nitty`; verified all eight records and revision updates. The Unknown item remains excluded/deferred.
 - **Classification rule:** anything showing shoes, shoe-box labels or storefronts is SACC content. This rule is recorded for future operator review. It does not retroactively classify other unreviewed records or trigger production promotion.
 
+### 12. Operator Review — Third SACC Content Sample (2026-11-02)
+- Nitty reviewed all eight items in `/Users/daplug/Documents/SACC_Data/library/media-exception-audit/2026-11-02/non-personal-sample-8-batch-3/` and classified all as SACC content.
+- Saved eight human-reviewed Library privacy overrides as `non_personal` (the existing internal include-compatible value), reviewer `Nitty`, with evidence. Verified all eight returned human-reviewed source and updated revisions; refreshed the private manifest and gallery.
+- This batch decision applies only to these eight items. Production promotion was not performed.
+
 ---
 
 ## Do Not Change / Guardrails
