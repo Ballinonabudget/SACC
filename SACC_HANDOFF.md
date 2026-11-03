@@ -91,6 +91,11 @@
 - These decisions cover only these eight records; no model labels, media files, organization plans or production records changed.
 - **Terminology set for this database:** “SACC”, “content”, or “SACC content” means include; “personal” means exclude. The six reviewed inclusion decisions remain stored in the existing Library `privacy='non_personal'` field for compatibility, with human-review evidence. This terminology clarification did not change app choices/schema or promote records to `sacc_app.db`. Defer other categories until needed; explain “non-personal” as legacy internal wording, not the operator-facing inclusion label.
 
+### 11. Operator Review — Second SACC Content Sample (2026-11-02)
+- Nitty reviewed the second eight-item batch in `/Users/daplug/Documents/SACC_Data/library/media-exception-audit/2026-11-02/non-personal-sample-8-batch-2/`: item 1 Personal; items 2, 3, 4, 5, 7 and 8 SACC content; item 6 Unknown because required data was missing.
+- Saved the labels as human-reviewed local Library privacy decisions with evidence, reviewer `Nitty`; verified all eight records and revision updates. The Unknown item remains excluded/deferred.
+- **Classification rule:** anything showing shoes, shoe-box labels or storefronts is SACC content. This rule is recorded for future operator review. It does not retroactively classify other unreviewed records or trigger production promotion.
+
 ---
 
 ## Do Not Change / Guardrails
