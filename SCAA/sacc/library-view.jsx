@@ -158,7 +158,275 @@ function LibraryDetail({data,loading,error,onClose,onSelect,stores,api,onSaved,o
   </aside>;
 }
 
+function FootwearSearchPilot({ api, accent }) {
+  const [q, setQ] = React.useState('Kobe');
+  const [store, setStore] = React.useState('store-mkt');
+  const [selectedYears, setSelectedYears] = React.useState(['2015', '2016']);
+  const [availableYears, setAvailableYears] = React.useState(['2015', '2016', '2017', '2018', 'undated']);
+  const [availableStores, setAvailableStores] = React.useState([
+    { id: 'all', label: 'All stores' },
+    { id: 'store-mkt', label: 'Nike Clearance Store - Marketplace', code: 'ORL-MKT-CLR' },
+    { id: 'store-idr', label: 'Nike Factory Store - International Drive', code: 'ORL-IDR-FAC' },
+    { id: 'store-adi', label: 'Adidas Outlet - Orlando International', code: 'ORL-ADI-OUT' },
+  ]);
+  const [results, setResults] = React.useState([]);
+  const [total, setTotal] = React.useState(0);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState('');
+
+  const loadFacets = React.useCallback(async () => {
+    try {
+      const data = await api('/pilot/facets?q=' + encodeURIComponent(q) + (store !== 'all' ? '&store=' + encodeURIComponent(store) : ''));
+      if (data && data.stores && data.stores.length) {
+        setAvailableStores([
+          { id: 'all', label: 'All stores' },
+          ...data.stores
+        ]);
+      }
+      if (data && data.years && data.years.length) {
+        const yVals = data.years.map(y => String(y.value));
+        setAvailableYears(prev => Array.from(new Set([...prev, ...yVals])));
+      }
+    } catch (e) {
+      // ignore facet fetch errors
+    }
+  }, [api, q, store]);
+
+  const doSearch = React.useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams();
+      if (q.trim()) params.set('q', q.trim());
+      if (store && store !== 'all') params.set('store', store);
+      params.set('years', selectedYears.join(','));
+      params.set('limit', '50');
+
+      const data = await api(`/pilot/search?${params.toString()}`);
+      setResults(data.results || []);
+      setTotal(Number(data.total) || 0);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [api, q, store, selectedYears]);
+
+  React.useEffect(() => {
+    loadFacets();
+  }, [loadFacets]);
+
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      doSearch();
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [doSearch]);
+
+  const toggleYear = (yr) => {
+    setSelectedYears(prev => {
+      if (prev.includes(yr)) return prev.filter(y => y !== yr);
+      return [...prev, yr];
+    });
+  };
+
+  const selectAllYears = () => setSelectedYears([...availableYears]);
+  const clearAllYears = () => setSelectedYears([]);
+
+  const setPreset = (presetQ, presetStore, presetYears) => {
+    setQ(presetQ);
+    if (presetStore !== undefined) setStore(presetStore);
+    if (presetYears !== undefined) setSelectedYears(presetYears);
+  };
+
+  return (
+    <div className="sl-pilot-wrap">
+      {/* Pilot sub-header info banner */}
+      <div className="sl-pilot-banner">
+        <div className="sl-pilot-banner-content">
+          <span className="sl-pilot-badge">STAGE 1 PILOT</span>
+          <strong>Footwear Library Search Engine (Private Staging)</strong>
+          <p>
+            Search footwear occurrences across solo shots and multi-shoe wall displays.
+            Isolated synthetic test catalog <code>sacc-library-pilot.sqlite3</code> with zero mutation to live catalog.
+          </p>
+        </div>
+        <div className="sl-pilot-presets">
+          <span className="sl-preset-label">Verification Presets:</span>
+          <button type="button" className="sl-pill-btn" onClick={() => setPreset('Kobe', 'store-mkt', ['2015', '2016'])}>
+            Kobe (2015+2016 @ Marketplace)
+          </button>
+          <button type="button" className="sl-pill-btn" onClick={() => setPreset('822675-706', 'all', ['2015', '2016', '2017', '2018', 'undated'])}>
+            SKU: 822675-706 (Solo + Wall + Repeats)
+          </button>
+          <button type="button" className="sl-pill-btn" onClick={() => setPreset('Bruce Lee', 'all', ['2015', '2016', '2017', '2018', 'undated'])}>
+            Colorway: Bruce Lee
+          </button>
+          <button type="button" className="sl-pill-btn" onClick={() => setPreset('Nike Multiples', 'all', ['2015', '2016', '2017', '2018', 'undated'])}>
+            Wall Shot: Nike Multiples
+          </button>
+        </div>
+      </div>
+
+      {/* Search Input Bar */}
+      <div className="sl-pilot-toolbar">
+        <div className="sl-search sl-pilot-search-box">
+          <span aria-hidden="true">⌕</span>
+          <input
+            placeholder="Search by shoe line, model, colorway, or exact SKU (e.g. Kobe, Kobe 11, Bruce Lee, 822675-706)..."
+            value={q}
+            onChange={e => setQ(e.target.value)}
+          />
+          {q && (
+            <button className="sl-icon" onClick={() => setQ('')} aria-label="Clear search">×</button>
+          )}
+        </div>
+      </div>
+
+      {/* Filter controls: Store and Multi-Year Checkboxes */}
+      <div className="sl-pilot-filters-card">
+        <div className="sl-pilot-filter-group">
+          <label className="sl-pilot-label">Store Location</label>
+          <select
+            className="sl-pilot-select"
+            value={store}
+            onChange={e => setStore(e.target.value)}
+          >
+            {availableStores.map(s => (
+              <option key={s.id} value={s.id}>
+                {s.label}{s.code ? ` (${s.code})` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="sl-pilot-filter-group sl-pilot-years-group">
+          <div className="sl-pilot-years-header">
+            <span className="sl-pilot-label">Capture Years (Multi-select)</span>
+            <div className="sl-pilot-year-actions">
+              <button type="button" className="sl-link-btn" onClick={selectAllYears}>All</button>
+              <span className="sl-sep">·</span>
+              <button type="button" className="sl-link-btn" onClick={clearAllYears}>None</button>
+            </div>
+          </div>
+          <div className="sl-pilot-checkboxes">
+            {availableYears.map(yr => {
+              const isChecked = selectedYears.includes(yr);
+              return (
+                <label key={yr} className={`sl-pilot-checkbox-label ${isChecked ? 'checked' : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={isChecked}
+                    onChange={() => toggleYear(yr)}
+                  />
+                  <span>{yr === 'undated' ? 'Undated' : yr}</span>
+                </label>
+              );
+            })}
+          </div>
+          {selectedYears.length === 0 && (
+            <span className="sl-pilot-warning">All years unchecked (yields 0 results)</span>
+          )}
+        </div>
+      </div>
+
+      {/* Results header */}
+      <div className="sl-pilot-results-bar">
+        <span className="sl-pilot-count">
+          {loading ? 'Searching catalog…' : `${total} matching sighting${total === 1 ? '' : 's'}`}
+        </span>
+        <span className="sl-pilot-subtext">
+          Repeat sightings and wall shot shoes are indexed and returned separately with capture month and year.
+        </span>
+      </div>
+
+      {/* Results Content */}
+      <div className="sl-pilot-results-container">
+        {error && (
+          <div className="sl-alert" role="alert">
+            <strong>Search Error</strong>
+            <p>{error}</p>
+          </div>
+        )}
+
+        {!loading && !error && results.length === 0 && (
+          <div className="sl-empty">
+            <span>⌕</span>
+            <h3>No matching sightings found</h3>
+            <p>
+              {selectedYears.length === 0
+                ? 'Check one or more capture years to see occurrences.'
+                : 'Try adjusting your search query, store filter, or selected capture years.'}
+            </p>
+            <button className="sl-button" onClick={() => { setQ('Kobe'); setStore('all'); selectAllYears(); }}>
+              Reset to All Kobe Sightings
+            </button>
+          </div>
+        )}
+
+        {results.length > 0 && (
+          <div className="sl-pilot-cards-grid">
+            {results.map(item => {
+              const isWall = item.is_wall_shot;
+              const shoeCount = (item.shoes || []).length;
+              return (
+                <article key={item.id} className="sl-pilot-card">
+                  <div className="sl-pilot-card-header">
+                    <div className="sl-pilot-card-title-row">
+                      <span className={`sl-pilot-type-pill ${isWall ? 'wall' : 'solo'}`}>
+                        {isWall ? `Wall Shot · ${shoeCount} Shoes` : 'Solo Sighting'}
+                      </span>
+                      <span className="sl-pilot-date-badge">
+                        {item.capture_month_year || 'Undated'}
+                      </span>
+                    </div>
+                    <h4 className="sl-pilot-title">{item.display_title}</h4>
+                    <div className="sl-pilot-store-tag">
+                      <span className="sl-store-icon">📍</span>
+                      <span>{item.store ? item.store.label : 'Store not confirmed'}</span>
+                      {item.store?.code && <small> ({item.store.code})</small>}
+                    </div>
+                  </div>
+
+                  <div className="sl-pilot-card-shoes">
+                    <div className="sl-pilot-shoes-header">Identified Footwear ({shoeCount}):</div>
+                    <ul className="sl-pilot-shoes-list">
+                      {(item.shoes || []).map((shoe, idx) => (
+                        <li key={shoe.shoe_id || idx} className="sl-pilot-shoe-item">
+                          <div className="sl-pilot-shoe-main">
+                            <span className="sl-shoe-brand">{shoe.brand}</span>
+                            <strong className="sl-shoe-model">{shoe.model}</strong>
+                            {shoe.colorway && <span className="sl-shoe-colorway">"{shoe.colorway}"</span>}
+                          </div>
+                          <div className="sl-pilot-shoe-meta">
+                            <code className="sl-sku-code">SKU: {shoe.sku || 'N/A'}</code>
+                            {shoe.price_observed != null && (
+                              <span className="sl-price-badge">
+                                Observed: ${Number(shoe.price_observed).toFixed(2)}
+                              </span>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className="sl-pilot-card-footer">
+                    <span className="sl-card-id">ID: {item.id}</span>
+                    <span className="sl-card-file">{item.filename}</span>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function LibraryView({mode,accent}) {
+  const [viewTab,setViewTab]=React.useState('pilot');
   const [session,setSession]=React.useState(null),[status,setStatus]=React.useState(null),[facets,setFacets]=React.useState({years:[],months:[],stores:[],review_reasons:[]});
   const [stores,setStores]=React.useState([]),[filters,setFilters]=React.useState({...SACC_LIBRARY_FILTERS});
   const [items,setItems]=React.useState([]),[total,setTotal]=React.useState(0),[page,setPage]=React.useState(0),[layout,setLayout]=React.useState('list');
@@ -233,28 +501,60 @@ function LibraryView({mode,accent}) {
     ['privacy','Privacy',[['all','All privacy states'],['unknown','Unknown'],['personal','Personal'],['mixed','Mixed'],['non_personal','Non-personal']]]];
   return <div className={`sacc-library ${selected?'sl-has-detail':''}`} style={{'--sl-accent':accent||P.accent}}>
     <style>{SACC_LIBRARY_CSS}</style>
-    <header className="sl-header"><div><span className="sl-eyebrow">RECOVERED MEDIA</span><h2>Library</h2><p>Browse photos and videos with their dates and location records.</p></div>
-      <div className="sl-header-actions"><span className="sl-local">● Local only</span><button className="sl-button" onClick={()=>setDirectoryOpen(true)} disabled={!ready}>Store directory</button><button className="sl-button" onClick={()=>{overview().then(()=>setRefresh(x=>x+1)).catch(e=>setError(e.message));}} disabled={!session||loading}>Refresh</button></div></header>
-    <div className="sl-metrics" aria-label="Library overview">{[['All items',totals.occurrences],['Photos',totals.images],['Videos',totals.videos],['Needs attention',totals.needs_review]].map(([label,n])=><div key={label}><span>{label}</span><strong>{status?libraryCount(n):'—'}</strong></div>)}</div>
-    <div className="sl-toolbar"><label className="sl-search"><span aria-hidden="true">⌕</span><input aria-label="Search library" placeholder="Search original names, notes or store aliases…" value={filters.q} maxLength={200} onChange={e=>filter('q',e.target.value)} disabled={!ready}/></label>
-      <div className="sl-view-switch" role="group" aria-label="Library view"><button className={layout==='list'?'active':''} onClick={()=>setLayout('list')} aria-pressed={layout==='list'}>☰ List</button><button className={layout==='grid'?'active':''} onClick={()=>setLayout('grid')} aria-pressed={layout==='grid'}>⊞ Grid</button></div></div>
-    <div className="sl-filters">{controls.map(([key,label,options])=><label key={key}>{label}<select value={filters[key]} onChange={e=>filter(key,e.target.value)} disabled={!ready}>{options.map(([value,text])=><option key={value} value={value}>{text}</option>)}</select></label>)}<button className="sl-reset" onClick={()=>{setFilters({...SACC_LIBRARY_FILTERS});setPage(0);}}>Reset filters</button></div>
-    <div className="sl-results-head"><span aria-live="polite">{loading?'Loading library…':`${libraryCount(total)} matching ${total===1?'item':'items'}`}{chosen.length?` · ${chosen.length} selected`:''}</span>
-      <div>{chosen.length>0&&<><button className="sl-button" onClick={()=>setChecked({})}>Clear selection</button><button className="sl-button" onClick={()=>setBatchReview(true)}>Review selected</button></>}
-      <button className="sl-button sl-primary" disabled={!ready||loading||!total} onClick={organizationPreview}>Preview organization{chosen.length?` (${chosen.length})`:''}</button></div></div>
-    {notice&&<div className="sl-notice" role="status">{notice}<button className="sl-icon" onClick={()=>setNotice('')} aria-label="Dismiss notice">×</button></div>}
-    {error&&<div className="sl-alert" role="alert"><strong>Library connection unavailable</strong><p>{error}</p><button className="sl-button" onClick={connect}>Retry connection</button></div>}
-    {status?.ready===false&&!error&&<div className="sl-empty"><span>◇</span><h3>Your recovered library is not loaded yet</h3><p>The recovery files are preserved. Library setup must finish before browsing is available.</p><button className="sl-button" onClick={connect}>Check again</button></div>}
-    <div className="sl-body"><div className="sl-results" aria-busy={loading}>
-      {!loading&&ready&&!error&&!items.length&&<div className="sl-empty"><span>⌕</span><h3>No matching media</h3><p>Try a different year, type or source flag. Unconfirmed stores remain searchable under “Not confirmed”.</p><button className="sl-button" onClick={()=>{setFilters({...SACC_LIBRARY_FILTERS});setPage(0);}}>Show all items</button></div>}
-      {loading&&!items.length&&!error&&<div className="sl-placeholder" role="status">Loading recovered records…</div>}
-      {items.length>0&&layout==='list'&&<div className="sl-table-wrap"><table className="sl-table"><thead><tr><th className="sl-select-cell"><span className="sl-sr">Select</span></th><th>Original filename</th><th>Capture date</th><th>Store / GPS</th><th>Metadata outcome</th></tr></thead><tbody>{items.map(item=><tr key={item.id} className={selected===item.id?'selected':''}><td className="sl-select-cell"><input type="checkbox" aria-label={`Select ${item.original_name}`} checked={!!checked[item.id]} onChange={()=>toggle(item)}/></td>
-        <td><button className="sl-row-open" onClick={()=>select(item.id)}><span className="sl-type-mark" aria-hidden="true">{item.media_type==='video'?'▷':item.media_type==='image'?'▧':'◇'}</span><span><strong>{item.original_name||'Unnamed source'}</strong><small>{libraryLabel(item.media_type)} · {libraryLabel(item.privacy||'unknown')}</small></span></button></td>
-        <td>{item.capture_date||'Undated'}{!item.date_trusted&&<small>Needs date review</small>}</td><td>{item.store?.label||'Not confirmed'}<small>{item.gps_requirement==='not_expected_screenshot'?'GPS not expected':item.has_gps?'GPS observation':'GPS missing'}</small></td>
-        <td><span className={`sl-outcome ${item.embedding_status==='metadata_write_readback_passed'?'sl-ok':''}`}>{libraryOutcome(item.embedding_status)}</span><small>{item.review_reasons?.length?`${item.review_reasons.length} source ${item.review_reasons.length===1?'flag':'flags'}`:'No source flags'}</small></td></tr>)}</tbody></table></div>}
-      {items.length>0&&layout==='grid'&&<div className="sl-grid">{items.map(item=><article className={`sl-card ${selected===item.id?'selected':''}`} key={item.id}><label className="sl-card-check"><input type="checkbox" aria-label={`Select ${item.original_name}`} checked={!!checked[item.id]} onChange={()=>toggle(item)}/></label><button className="sl-card-open" onClick={()=>select(item.id)}><LibraryMedia item={item} compact/><div className="sl-card-copy"><strong>{item.original_name||'Unnamed source'}</strong><small>{item.capture_date||'Undated'} · {libraryLabel(item.media_type)}</small><span>{item.store?.label||'Store not confirmed'}</span><em>{libraryOutcome(item.embedding_status)}</em></div></button></article>)}</div>}
-    </div>{selected&&<LibraryDetail data={detail} loading={detailLoading} error={detailError} onClose={closeDetail} onSelect={select} stores={stores} api={api} onSaved={saved} onReload={()=>loadDetail(selected)}/>}</div>
-    <footer className="sl-footer"><span>{total?`${libraryCount(page*PAGE_SIZE+1)}–${libraryCount(Math.min((page+1)*PAGE_SIZE,total))} of ${libraryCount(total)}`:'No results'}<small> · Source metadata and reviewed labels are separate.</small></span><div><button className="sl-button" disabled={page===0||loading} onClick={()=>setPage(p=>Math.max(0,p-1))}>← Previous</button><span>Page {page+1} / {libraryCount(pages)}</span><button className="sl-button" disabled={(page+1)*PAGE_SIZE>=total||loading} onClick={()=>setPage(p=>p+1)}>Next →</button></div></footer>
+    <header className="sl-header">
+      <div>
+        <span className="sl-eyebrow">SACC LIBRARY</span>
+        <h2>Library</h2>
+        <div className="sl-nav-tabs">
+          <button
+            type="button"
+            className={`sl-nav-tab ${viewTab === 'pilot' ? 'active' : ''}`}
+            onClick={() => setViewTab('pilot')}
+          >
+            Footwear Search Pilot (Staging)
+          </button>
+          <button
+            type="button"
+            className={`sl-nav-tab ${viewTab === 'media' ? 'active' : ''}`}
+            onClick={() => setViewTab('media')}
+          >
+            Recovered Media Catalog
+          </button>
+        </div>
+      </div>
+      <div className="sl-header-actions">
+        <span className="sl-local">● Local only</span>
+        {viewTab === 'media' && <button className="sl-button" onClick={()=>setDirectoryOpen(true)} disabled={!ready}>Store directory</button>}
+        {viewTab === 'media' && <button className="sl-button" onClick={()=>{overview().then(()=>setRefresh(x=>x+1)).catch(e=>setError(e.message));}} disabled={!session||loading}>Refresh</button>}
+      </div>
+    </header>
+
+    {viewTab === 'pilot' ? (
+      <FootwearSearchPilot api={api} accent={accent} />
+    ) : (
+      <>
+        <div className="sl-metrics" aria-label="Library overview">{[['All items',totals.occurrences],['Photos',totals.images],['Videos',totals.videos],['Needs attention',totals.needs_review]].map(([label,n])=><div key={label}><span>{label}</span><strong>{status?libraryCount(n):'—'}</strong></div>)}</div>
+        <div className="sl-toolbar"><label className="sl-search"><span aria-hidden="true">⌕</span><input aria-label="Search library" placeholder="Search original names, notes or store aliases…" value={filters.q} maxLength={200} onChange={e=>filter('q',e.target.value)} disabled={!ready}/></label>
+          <div className="sl-view-switch" role="group" aria-label="Library view"><button className={layout==='list'?'active':''} onClick={()=>setLayout('list')} aria-pressed={layout==='list'}>☰ List</button><button className={layout==='grid'?'active':''} onClick={()=>setLayout('grid')} aria-pressed={layout==='grid'}>⊞ Grid</button></div></div>
+        <div className="sl-filters">{controls.map(([key,label,options])=><label key={key}>{label}<select value={filters[key]} onChange={e=>filter(key,e.target.value)} disabled={!ready}>{options.map(([value,text])=><option key={value} value={value}>{text}</option>)}</select></label>)}<button className="sl-reset" onClick={()=>{setFilters({...SACC_LIBRARY_FILTERS});setPage(0);}}>Reset filters</button></div>
+        <div className="sl-results-head"><span aria-live="polite">{loading?'Loading library…':`${libraryCount(total)} matching ${total===1?'item':'items'}`}{chosen.length?` · ${chosen.length} selected`:''}</span>
+          <div>{chosen.length>0&&<><button className="sl-button" onClick={()=>setChecked({})}>Clear selection</button><button className="sl-button" onClick={()=>setBatchReview(true)}>Review selected</button></>}
+          <button className="sl-button sl-primary" disabled={!ready||loading||!total} onClick={organizationPreview}>Preview organization{chosen.length?` (${chosen.length})`:''}</button></div></div>
+        {notice&&<div className="sl-notice" role="status">{notice}<button className="sl-icon" onClick={()=>setNotice('')} aria-label="Dismiss notice">×</button></div>}
+        {error&&<div className="sl-alert" role="alert"><strong>Library connection unavailable</strong><p>{error}</p><button className="sl-button" onClick={connect}>Retry connection</button></div>}
+        {status?.ready===false&&!error&&<div className="sl-empty"><span>◇</span><h3>Your recovered library is not loaded yet</h3><p>The recovery files are preserved. Library setup must finish before browsing is available.</p><button className="sl-button" onClick={connect}>Check again</button></div>}
+        <div className="sl-body"><div className="sl-results" aria-busy={loading}>
+          {!loading&&ready&&!error&&!items.length&&<div className="sl-empty"><span>⌕</span><h3>No matching media</h3><p>Try a different year, type or source flag. Unconfirmed stores remain searchable under “Not confirmed”.</p><button className="sl-button" onClick={()=>{setFilters({...SACC_LIBRARY_FILTERS});setPage(0);}}>Show all items</button></div>}
+          {loading&&!items.length&&!error&&<div className="sl-placeholder" role="status">Loading recovered records…</div>}
+          {items.length>0&&layout==='list'&&<div className="sl-table-wrap"><table className="sl-table"><thead><tr><th className="sl-select-cell"><span className="sl-sr">Select</span></th><th>Original filename</th><th>Capture date</th><th>Store / GPS</th><th>Metadata outcome</th></tr></thead><tbody>{items.map(item=><tr key={item.id} className={selected===item.id?'selected':''}><td className="sl-select-cell"><input type="checkbox" aria-label={`Select ${item.original_name}`} checked={!!checked[item.id]} onChange={()=>toggle(item)}/></td>
+            <td><button className="sl-row-open" onClick={()=>select(item.id)}><span className="sl-type-mark" aria-hidden="true">{item.media_type==='video'?'▷':item.media_type==='image'?'▧':'◇'}</span><span><strong>{item.original_name||'Unnamed source'}</strong><small>{libraryLabel(item.media_type)} · {libraryLabel(item.privacy||'unknown')}</small></span></button></td>
+            <td>{item.capture_date||'Undated'}{!item.date_trusted&&<small>Needs date review</small>}</td><td>{item.store?.label||'Not confirmed'}<small>{item.gps_requirement==='not_expected_screenshot'?'GPS not expected':item.has_gps?'GPS observation':'GPS missing'}</small></td>
+            <td><span className={`sl-outcome ${item.embedding_status==='metadata_write_readback_passed'?'sl-ok':''}`}>{libraryOutcome(item.embedding_status)}</span><small>{item.review_reasons?.length?`${item.review_reasons.length} source ${item.review_reasons.length===1?'flag':'flags'}`:'No source flags'}</small></td></tr>)}</tbody></table></div>}
+          {items.length>0&&layout==='grid'&&<div className="sl-grid">{items.map(item=><article className={`sl-card ${selected===item.id?'selected':''}`} key={item.id}><label className="sl-card-check"><input type="checkbox" aria-label={`Select ${item.original_name}`} checked={!!checked[item.id]} onChange={()=>toggle(item)}/></label><button className="sl-card-open" onClick={()=>select(item.id)}><LibraryMedia item={item} compact/><div className="sl-card-copy"><strong>{item.original_name||'Unnamed source'}</strong><small>{item.capture_date||'Undated'} · {libraryLabel(item.media_type)}</small><span>{item.store?.label||'Store not confirmed'}</span><em>{libraryOutcome(item.embedding_status)}</em></div></button></article>)}</div>}
+        </div>{selected&&<LibraryDetail data={detail} loading={detailLoading} error={detailError} onClose={closeDetail} onSelect={select} stores={stores} api={api} onSaved={saved} onReload={()=>loadDetail(selected)}/>}</div>
+        <footer className="sl-footer"><span>{total?`${libraryCount(page*PAGE_SIZE+1)}–${libraryCount(Math.min((page+1)*PAGE_SIZE,total))} of ${libraryCount(total)}`:'No results'}<small> · Source metadata and reviewed labels are separate.</small></span><div><button className="sl-button" disabled={page===0||loading} onClick={()=>setPage(p=>Math.max(0,p-1))}>← Previous</button><span>Page {page+1} / {libraryCount(pages)}</span><button className="sl-button" disabled={(page+1)*PAGE_SIZE>=total||loading} onClick={()=>setPage(p=>p+1)}>Next →</button></div></footer>
+      </>
+    )}
     {batchReview&&<LibraryDialog title={`Review ${chosen.length} selected items`} onClose={()=>setBatchReview(false)}><LibraryReviewForm targets={chosen} stores={stores} api={api} onSaved={saved} onReload={reloadSelected}/></LibraryDialog>}
     {previewOpen&&<LibraryDialog title="Organization preview" onClose={closePreview} wide>{previewLoading?<p className="sl-placeholder" role="status">Preparing a saved naming and folder preview…</p>:previewError?<div className="sl-alert" role="alert">{previewError}<button className="sl-button" onClick={organizationPreview}>Try again</button></div>:preview&&<>
       <div className="sl-preview-summary"><div><span>Planned items</span><strong>{libraryCount(preview.files)}</strong></div><div><span>Held for review</span><strong>{libraryCount(typeof preview.held==='number'?preview.held:Object.values(preview.held||{}).reduce((a,b)=>a+Number(b||0),0))}</strong></div><div><span>Source data represented</span><strong>{libraryBytes(preview.bytes)}</strong></div></div>
@@ -285,4 +585,75 @@ const SACC_LIBRARY_CSS = `
 .sl-overlay{position:absolute;inset:0;background:#1f1c1770;z-index:25;display:flex;align-items:center;justify-content:center;padding:22px;backdrop-filter:blur(3px)}.sl-dialog{display:flex;flex-direction:column;max-height:94%;width:min(520px,100%);background:#fff;border:1px solid #e5e2dc;border-radius:12px;box-shadow:0 18px 70px #00000035;overflow:hidden}.sl-dialog-wide{width:min(790px,100%)}.sl-dialog-head{display:flex;align-items:center;justify-content:space-between;padding:13px 17px;border-bottom:1px solid #e5e2dc;background:#f8f6f2}.sl-dialog-head h3{font-size:14px;margin:0;letter-spacing:-.3px}.sl-dialog-body{padding:18px;overflow:auto}.sl-dialog-body>.sl-notice{margin:12px 0}.sl-preview-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.sl-preview-summary>div{background:#f5f2ed;border:1px solid #e5e2dc;border-radius:6px;padding:11px}.sl-preview-summary span{display:block;font-size:9px;color:#9a9184}.sl-preview-summary strong{display:block;font-size:20px;margin-top:5px;letter-spacing:-.5px}.sl-plan-paths>div{padding:13px 0;border-top:1px solid #e5e2dc}.sl-plan-paths p{color:#a1988c;margin:5px 0}.sl-plan-paths strong{display:block;color:#5e6e51;font-weight:500}.sl-plan-paths small{display:block;color:#aa7936;margin-top:6px}
 @media(max-width:1150px){.sl-header{padding:16px}.sl-metrics{margin:12px 16px 10px}.sl-toolbar{margin:0 16px 10px}.sl-filters{padding:0 16px 10px}.sl-results-head{padding:9px 16px}.sl-detail{position:absolute;right:0;top:0;bottom:0;width:min(390px,100%);min-width:0;z-index:5;box-shadow:-12px 0 35px #00000019}.sl-metrics>div{display:block;padding:10px}.sl-metrics strong{display:block;margin-top:4px}.sl-footer>span small{display:none}}
 @media(max-width:760px){.sl-header{padding:12px;align-items:flex-start}.sl-header h2{font-size:22px}.sl-header p{font-size:10px;max-width:190px}.sl-header-actions{gap:5px;max-width:160px}.sl-header-actions .sl-button{font-size:9px;padding:5px 6px}.sl-local{font-size:9px}.sl-metrics{margin:10px 12px;gap:0}.sl-metrics>div{padding:8px;border-right:1px solid #e5e2dc}.sl-metrics span{font-size:8px}.sl-metrics strong{font-size:17px}.sl-toolbar{margin:0 12px 8px;gap:6px}.sl-search input{font-size:10px}.sl-view-switch button{font-size:9px;padding:6px}.sl-filters{padding:0 12px 9px;gap:6px;max-height:120px;overflow:auto}.sl-filters label{min-width:95px;max-width:none;font-size:8px}.sl-filters select{font-size:10px;height:28px}.sl-results-head{padding:7px 12px;font-size:9px;align-items:flex-start}.sl-results-head>span{padding-top:4px}.sl-results-head>div{max-width:220px}.sl-results-head .sl-button{font-size:9px}.sl-footer{padding:8px 10px;font-size:9px;flex-wrap:wrap}.sl-footer>div{margin-left:auto;gap:5px}.sl-footer .sl-button{font-size:9px;padding:5px}.sl-overlay{padding:10px}.sl-dialog{max-height:98%}.sl-preview-summary{gap:5px}.sl-preview-summary>div{padding:8px}.sl-preview-summary strong{font-size:16px}.sl-two{grid-template-columns:1fr}.sl-grid{padding:12px;grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:9px}}
+
+/* --- Footwear Search Pilot Tabs & Styling --- */
+.sl-nav-tabs{display:flex;gap:6px;margin-top:10px}
+.sl-nav-tab{background:#eee9e0;border:1px solid #dcd7cf;color:#6b6459;padding:6px 12px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;transition:all 0.15s ease}
+.sl-nav-tab:hover{background:#e4ded4;color:#1c1c1e}
+.sl-nav-tab.active{background:var(--sl-accent);color:#fff;border-color:var(--sl-accent);box-shadow:0 1px 3px rgba(0,0,0,0.12)}
+
+.sl-pilot-wrap{display:flex;flex-direction:column;flex:1;min-height:0;overflow:auto;padding:16px 24px;gap:14px}
+.sl-pilot-banner{background:#fff;border:1px solid #e5e2dc;border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:12px;box-shadow:0 1px 3px rgba(0,0,0,0.04)}
+.sl-pilot-banner-content strong{display:block;font-size:14px;color:#1c1c1e;margin:4px 0 2px}
+.sl-pilot-banner-content p{margin:0;font-size:11px;color:#6b6864;line-height:1.4}
+.sl-pilot-banner-content code{background:#f0ede7;padding:2px 5px;border-radius:4px;font-size:10px}
+.sl-pilot-badge{display:inline-block;background:#e5f0e6;color:#2e7545;font-size:9px;font-weight:700;letter-spacing:0.08em;padding:2px 6px;border-radius:4px}
+.sl-pilot-presets{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding-top:8px;border-top:1px solid #f0ede7}
+.sl-preset-label{font-size:10px;color:#8c8780;font-weight:600}
+.sl-pill-btn{background:#f5f2ed;border:1px solid #dcd7cf;border-radius:12px;padding:4px 9px;font-size:10px;font-weight:500;color:#46423c;cursor:pointer;transition:background 0.12s ease}
+.sl-pill-btn:hover{background:#e7e2d9;border-color:#beb7ab}
+
+.sl-pilot-toolbar{display:flex}
+.sl-pilot-search-box{background:#fff;border:1px solid #dcd7cf;border-radius:8px;padding:0 12px;box-shadow:0 1px 2px rgba(0,0,0,0.03)}
+.sl-pilot-search-box input{padding:12px 0;font-size:13px}
+
+.sl-pilot-filters-card{display:grid;grid-template-columns:280px 1fr;gap:16px;background:#fff;border:1px solid #e5e2dc;border-radius:8px;padding:14px 16px}
+.sl-pilot-filter-group{display:flex;flex-direction:column;gap:6px}
+.sl-pilot-label{font-size:10px;font-weight:700;letter-spacing:0.04em;color:#766d60;text-transform:uppercase}
+.sl-pilot-select{height:34px;border:1px solid #dcd7cf;border-radius:6px;padding:0 8px;font-size:11px;background:#fff;color:#1c1c1e}
+.sl-pilot-years-header{display:flex;align-items:center;justify-content:space-between}
+.sl-pilot-year-actions{display:flex;align-items:center;gap:4px;font-size:10px}
+.sl-link-btn{background:none;border:0;color:var(--sl-accent);font-size:10px;cursor:pointer;padding:0 2px;font-weight:600}
+.sl-link-btn:hover{text-decoration:underline}
+.sl-sep{color:#bcb5aa}
+.sl-pilot-checkboxes{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.sl-pilot-checkbox-label{display:flex;align-items:center;gap:5px;background:#f5f2ed;border:1px solid #ded8ce;padding:5px 9px;border-radius:6px;cursor:pointer;font-size:11px;color:#373531;user-select:none;transition:all 0.12s ease}
+.sl-pilot-checkbox-label.checked{background:#e8f0ec;border-color:#b4cebe;color:#1b5731;font-weight:600}
+.sl-pilot-checkbox-label input{margin:0;cursor:pointer}
+.sl-pilot-warning{font-size:10px;color:#ba3a2a;font-style:italic;margin-top:2px}
+
+.sl-pilot-results-bar{display:flex;align-items:baseline;justify-content:space-between;padding:4px 2px}
+.sl-pilot-count{font-size:13px;font-weight:700;color:#1c1c1e}
+.sl-pilot-subtext{font-size:10px;color:#8c8780}
+
+.sl-pilot-results-container{flex:1;min-height:0}
+.sl-pilot-cards-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));gap:14px;padding-bottom:24px}
+.sl-pilot-card{background:#fff;border:1px solid #ded8ce;border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:12px;box-shadow:0 1px 3px rgba(0,0,0,0.04);transition:transform 0.1s ease, box-shadow 0.1s ease}
+.sl-pilot-card:hover{border-color:#bcb5aa;box-shadow:0 3px 8px rgba(0,0,0,0.07)}
+
+.sl-pilot-card-header{display:flex;flex-direction:column;gap:4px}
+.sl-pilot-card-title-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.sl-pilot-type-pill{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;padding:3px 7px;border-radius:4px}
+.sl-pilot-type-pill.solo{background:#e3f2fd;color:#1565c0}
+.sl-pilot-type-pill.wall{background:#f3e5f5;color:#7b1fa2}
+.sl-pilot-date-badge{font-size:10px;font-weight:700;background:#fff8e1;color:#f57f17;padding:3px 7px;border-radius:4px;border:1px solid #ffe082}
+
+.sl-pilot-title{font-size:13px;font-weight:700;color:#1c1c1e;margin:2px 0 0;overflow-wrap:anywhere}
+.sl-pilot-store-tag{display:flex;align-items:center;gap:4px;font-size:10px;color:#6b6459;margin-top:2px}
+.sl-pilot-store-tag small{color:#9e978d}
+
+.sl-pilot-card-shoes{background:#faf8f5;border:1px solid #ede8e1;border-radius:6px;padding:10px 12px}
+.sl-pilot-shoes-header{font-size:9px;font-weight:700;text-transform:uppercase;color:#8c8780;letter-spacing:0.04em;margin-bottom:6px}
+.sl-pilot-shoes-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.sl-pilot-shoe-item{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font-size:11px}
+.sl-pilot-shoe-main{display:flex;align-items:baseline;gap:5px;flex-wrap:wrap}
+.sl-shoe-brand{color:#8c8780;font-size:10px}
+.sl-shoe-model{color:#1c1c1e;font-weight:600}
+.sl-shoe-colorway{color:#766d60;font-style:italic;font-size:10px}
+.sl-pilot-shoe-meta{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.sl-sku-code{font-family:ui-monospace,SFMono-Regular,monospace;font-size:10px;background:#ede8e1;padding:2px 5px;border-radius:3px;color:#373531}
+.sl-price-badge{background:#e8f5e9;color:#2e7d32;font-weight:600;font-size:10px;padding:2px 5px;border-radius:3px}
+
+.sl-pilot-card-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid #f0ede7;padding-top:8px;font-size:9px;color:#a19b91}
+.sl-card-file{font-family:ui-monospace,SFMono-Regular,monospace}
 `;

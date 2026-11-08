@@ -120,6 +120,37 @@ def items(request:Request,limit:int=30,offset:int=0):
     _authorize(request);return _call(LibraryDB().items,dict(request.query_params),limit,offset)
 
 
+def get_pilot_db():
+    custom = os.getenv('SACC_PILOT_DB')
+    if custom and Path(custom).is_file():
+        return LibraryDB(Path(custom))
+    pilot_path = DEFAULT_ROOT / 'sacc-library-pilot.sqlite3'
+    if pilot_path.is_file():
+        return LibraryDB(pilot_path)
+    return LibraryDB()
+
+
+@router.get('/pilot/search')
+def pilot_search(request:Request,q:str='',store:str='all',limit:int=30,offset:int=0):
+    _authorize(request)
+    parsed_years=None
+    if 'years' in request.query_params:
+        raw_val=request.query_params.get('years','')
+        parsed_years=[y.strip() for y in raw_val.split(',') if y.strip()] if raw_val else []
+    return _call(get_pilot_db().search_footwear,q=q,years=parsed_years,store=store,limit=limit,offset=offset)
+
+
+@router.get('/pilot/facets')
+def pilot_facets(request:Request,q:str='',store:str='all'):
+    _authorize(request)
+    from .library_search import _compute_facets
+    def _facets():
+        db=get_pilot_db()
+        with db.connection() as con:
+            return _compute_facets(con,q=q,store=store)
+    return _call(_facets)
+
+
 @router.get('/items/{oid}')
 def detail(oid:str,request:Request):_authorize(request);return _call(LibraryDB().detail,oid)
 

@@ -61,6 +61,21 @@ CREATE TRIGGER library_fts_delete AFTER DELETE ON library_occurrences BEGIN
 CREATE TRIGGER library_fts_update AFTER UPDATE OF search_text ON library_occurrences BEGIN
  INSERT INTO library_fts(library_fts,rowid,search_text) VALUES('delete',old.rowid,old.search_text);
  INSERT INTO library_fts(rowid,search_text) VALUES(new.rowid,new.search_text); END;
+CREATE TABLE IF NOT EXISTS library_shoes(id TEXT PRIMARY KEY,brand TEXT NOT NULL,line TEXT,
+ model TEXT NOT NULL,colorway TEXT,sku TEXT,category TEXT,display_name TEXT NOT NULL,
+ aliases_json TEXT NOT NULL DEFAULT '[]',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE INDEX IF NOT EXISTS idx_ls_sku ON library_shoes(sku);
+CREATE INDEX IF NOT EXISTS idx_ls_line ON library_shoes(line);
+CREATE INDEX IF NOT EXISTS idx_ls_model ON library_shoes(model);
+CREATE INDEX IF NOT EXISTS idx_ls_brand ON library_shoes(brand);
+CREATE TABLE IF NOT EXISTS library_shoe_associations(id TEXT PRIMARY KEY,
+ occurrence_id TEXT NOT NULL REFERENCES library_occurrences(id),
+ shoe_id TEXT NOT NULL REFERENCES library_shoes(id),tag_type TEXT NOT NULL DEFAULT 'solo',
+ group_descriptor TEXT,confidence REAL NOT NULL DEFAULT 1.0,evidence TEXT,
+ price_observed REAL,time_start_sec REAL,time_end_sec REAL,
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE INDEX IF NOT EXISTS idx_lsa_occurrence ON library_shoe_associations(occurrence_id);
+CREATE INDEX IF NOT EXISTS idx_lsa_shoe ON library_shoe_associations(shoe_id);
 '''
 
 
@@ -434,3 +449,14 @@ class LibraryDB:
                                        (str(e['target']),plan_id,e['id'],e['review_revision'],e['sha256']))
                 changed+=cursor.rowcount
         return changed
+
+    def search_footwear(self, q='', years=None, store='all', limit=30, offset=0):
+        from .library_search import search_footwear, ensure_catalog_schema
+        with self.connection() as con:
+            tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if 'library_shoes' not in tables:
+            with self.connection(write=True) as con:
+                ensure_catalog_schema(con)
+        with self.connection() as con:
+            return search_footwear(con, q=q, years=years, store=store, limit=limit, offset=offset)
+

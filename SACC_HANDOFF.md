@@ -172,6 +172,21 @@
 - Saved these eight labels as human-reviewed local Library privacy decisions with evidence, reviewer `Nitty`, and updated the private manifest/gallery. All eight results and revisions verified.
 - Production promotion was not performed.
 
+### 27. Footwear Library Search Pilot Implementation (2026-11-08) [agent:antigravity]
+- **Design Review**: Reviewed `docs/SACC_LIBRARY_SEARCH_DESIGN.md` against 15-point criteria. Zero blockers; approved with notes in `docs/SACC_TAKEOUT_LIBRARY_SEARCH_DESIGN_REVIEW.md`.
+- **Private Staging Database**: Created and seeded synthetic catalog at `/Users/daplug/Documents/SACC_Data/library/staging/sacc-library-pilot.sqlite3` via `sacc_takeout/pilot_fixtures.py`. Live catalog (`sacc-library.sqlite3`) and original media remained 100% byte-for-byte untouched.
+- **Search Engine Layer**: Implemented `sacc_takeout/library_search.py` supporting:
+  - Query across line, model, colorway, SKU, and wall-shot group descriptors.
+  - Multi-year capture filtering with explicit empty set yielding zero results.
+  - Store filtering by exact store ID.
+  - Wall-shot deduplication (group occurrences indexed once while exposing all contained shoes).
+  - Repeat sighting separation preserving capture month and year (e.g. May 2016 @ $160 vs August 2016 @ $119.99).
+- **Backend & Local Guard**: Exposed `/api/library/pilot/search` and `/api/library/pilot/facets` in `sacc_takeout/library_api.py` guarded by `LocalLibraryGuard` and resolved via `get_pilot_db()`.
+- **UI Integration**: Added interactive `FootwearSearchPilot` with multi-year checkboxes, store selectors, quick-verification chips, and sighting cards to `SCAA/sacc/library-view.jsx`.
+- **Testing & Verification**: 115 of 115 tests passing (`PYTHONPATH=tests:. .venv-poc-313/bin/python -m unittest discover tests`), including 9 targeted pilot search tests in `tests/test_library_search.py`.
+- **Where to Open**: `http://localhost:5174/SACC.html` -> **Library** tab -> **Footwear Search Pilot (Staging)**.
+- **Primary Verification Query**: Search `Kobe`, select store `Nike Clearance Store - Marketplace`, check capture years `2015` and `2016`. Result: 3 distinct sightings (2 solo sightings with price drop, 1 three-shoe wall shot).
+
 ---
 
 ## Do Not Change / Guardrails
