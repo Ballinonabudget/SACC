@@ -14,7 +14,7 @@ from pathlib import Path
 import sqlite3
 from typing import Optional
 
-from .library import LibraryDB, SCHEMA, DEFAULT_ROOT
+from .library import LibraryDB, SCHEMA, DEFAULT_ROOT, DEFAULT_RECOVERY
 from .library_search import ensure_catalog_schema
 
 PILOT_DB_PATH = DEFAULT_ROOT / "sacc-library-pilot.sqlite3"
@@ -78,49 +78,80 @@ def create_pilot_database(db_path: Optional[Path] = None) -> Path:
         )
 
         # 3. Seed Occurrences & Associations
+        recovery_root = DEFAULT_RECOVERY
+        objects_dir = recovery_root / "objects"
+
         # Base import and media rows for foreign keys
         con.execute(
             """
             INSERT INTO library_imports (id, plan_id, watermark, report_sha, source_root, summary_json)
-            VALUES ('imp-pilot-1', 'plan-pilot', 1, 'sha-fixture', '/synthetic/root', '{}')
-            """
+            VALUES ('imp-pilot-1', 'plan-pilot', 1, 'sha-fixture', ?, '{}')
+            """,
+            (str(recovery_root),)
         )
 
         occurrences = [
             # 1. Solo still: Kobe 11 Bruce Lee at Marketplace (May 2016)
-            ("occ_kobe11_may16", "med_1", "IMG_20160514_KOBE11.JPG", "image", "image/jpeg",
-             "2016-05-14T15:30:00Z", "2016-05-14", "store-mkt", "Kobe 11 Bruce Lee Marketplace May 2016"),
+            ("occ_kobe11_may16", "med_1", "IMG_20160514_KOBE11.JPG",
+             "e279bc799af78c6f1fcff7cdc98b5228d945f250d354d03a61ff2b1bf9383163.png",
+             "image", "image/png", "2016-05-14T15:30:00Z", "2016-05-14", "store-mkt",
+             "Kobe 11 Bruce Lee Marketplace May 2016"),
 
             # 2. Repeat sighting: Kobe 11 Bruce Lee at Marketplace (August 2016) with price drop
-            ("occ_kobe11_aug16", "med_2", "IMG_20160822_KOBE11.JPG", "image", "image/jpeg",
-             "2016-08-22T17:15:00Z", "2016-08-22", "store-mkt", "Kobe 11 Bruce Lee Marketplace August 2016"),
+            ("occ_kobe11_aug16", "med_2", "IMG_20160822_KOBE11.JPG",
+             "0c0be8945c6b47be9f80cc79faf07970ec79d77b42a0e098843b639bac15b165.png",
+             "image", "image/png", "2016-08-22T17:15:00Z", "2016-08-22", "store-mkt",
+             "Kobe 11 Bruce Lee Marketplace August 2016"),
 
             # 3. Wall shot: Nike Multiples (Kobe 11 + KD 8 + LeBron 13) at Marketplace (June 2016)
-            ("occ_wall_june16", "med_3", "IMG_20160618_WALL.JPG", "image", "image/jpeg",
-             "2016-06-18T14:00:00Z", "2016-06-18", "store-mkt", "Nike Basketball Clearance Wall June 2016 Multiple Shoes"),
+            ("occ_wall_june16", "med_3", "IMG_20160618_WALL.JPG",
+             "406542de439372ca6f590198d2aa1c605b6d3488fe5d18d4f037a2eba84b4a60.png",
+             "image", "image/png", "2016-06-18T14:00:00Z", "2016-06-18", "store-mkt",
+             "Nike Basketball Clearance Wall June 2016 Multiple Shoes"),
 
             # 4. Solo still: Kobe 9 Elite at I-Drive (July 2015)
-            ("occ_kobe9_jul15", "med_4", "IMG_20150710_KOBE9.JPG", "image", "image/jpeg",
-             "2015-07-10T11:45:00Z", "2015-07-10", "store-idr", "Kobe 9 Elite Perspective I-Drive July 2015"),
+            ("occ_kobe9_jul15", "med_4", "IMG_20150710_KOBE9.JPG",
+             "c14373c142d1180fd2ed3958f1aa6f0b16119b720d914ac2f6c271159f811316.png",
+             "image", "image/png", "2015-07-10T11:45:00Z", "2015-07-10", "store-idr",
+             "Kobe 9 Elite Perspective I-Drive July 2015"),
 
             # 5. Solo still: Air Jordan 11 Concord at I-Drive (December 2018)
-            ("occ_aj11_dec18", "med_5", "IMG_20181208_CONCORD.JPG", "image", "image/jpeg",
-             "2018-12-08T16:20:00Z", "2018-12-08", "store-idr", "Air Jordan 11 Concord I-Drive December 2018"),
+            ("occ_aj11_dec18", "med_5", "IMG_20181208_CONCORD.JPG",
+             "f2d744b1a4fc9f7429ed4be9594a3d723cc8262cd612c7bbfe559eba9a7fff9c.jpg",
+             "image", "image/jpeg", "2018-12-08T16:20:00Z", "2018-12-08", "store-idr",
+             "Air Jordan 11 Concord I-Drive December 2018"),
 
             # 6. Wall shot: Jordan Multiples (AJ1 + AJ11) at I-Drive (November 2018)
-            ("occ_wall_nov18", "med_6", "IMG_20181124_JORDANWALL.JPG", "image", "image/jpeg",
-             "2018-11-24T18:00:00Z", "2018-11-24", "store-idr", "Jordan Multiples Wall Display November 2018"),
+            ("occ_wall_nov18", "med_6", "IMG_20181124_JORDANWALL.JPG",
+             "f75e16205553b491f0eda986f1d5668b884b87ce62c5da1e7d6aadb7b364926b.png",
+             "image", "image/png", "2018-11-24T18:00:00Z", "2018-11-24", "store-idr",
+             "Jordan Multiples Wall Display November 2018"),
 
             # 7. Undated solo still: Kobe 11 Mambacurial at Marketplace
-            ("occ_kobe11_undated", "med_7", "IMG_UNDATED_MAMBACURIAL.JPG", "image", "image/jpeg",
-             None, None, "store-mkt", "Kobe 11 Mambacurial Marketplace Undated"),
+            ("occ_kobe11_undated", "med_7", "IMG_UNDATED_MAMBACURIAL.JPG",
+             "0a89a16abd87f4c13b291fcb1f2530ce8be46266bd6c6d393ee84b1f718fcd1c.png",
+             "image", "image/png", None, None, "store-mkt",
+             "Kobe 11 Mambacurial Marketplace Undated"),
 
             # 8. Solo still: Ultraboost at Adidas Outlet (October 2017)
-            ("occ_ub_oct17", "med_8", "IMG_20171015_BOOST.JPG", "image", "image/jpeg",
-             "2017-10-15T13:10:00Z", "2017-10-15", "store-adi", "Adidas Ultraboost 3.0 Triple White October 2017"),
+            ("occ_ub_oct17", "med_8", "IMG_20171015_BOOST.JPG",
+             "cd237c105bc3388200cea536624430d6e5f495ef9911d494f34ae3e675f9050a.png",
+             "image", "image/png", "2017-10-15T13:10:00Z", "2017-10-15", "store-adi",
+             "Adidas Ultraboost 3.0 Triple White October 2017"),
         ]
 
-        for oid, mid, name, mtype, mime, cap_utc, eff_date, store_id, stext in occurrences:
+        for oid, mid, name, obj_file, mtype, mime, cap_utc, eff_date, store_id, stext in occurrences:
+            obj_path = objects_dir / obj_file
+            if obj_path.exists():
+                st = obj_path.stat()
+                file_size = st.st_size
+                mtime_ns = st.st_mtime_ns
+                rec_path = str(obj_path)
+            else:
+                file_size = 1024000
+                mtime_ns = 1000000
+                rec_path = f"/synthetic/rec/{name}"
+
             con.execute(
                 """
                 INSERT OR IGNORE INTO library_media (id, account_id, source_sha256, remote_eligible)
@@ -137,16 +168,16 @@ def create_pilot_database(db_path: Optional[Path] = None) -> Path:
                     date_trusted, gps_lat, gps_lon, screenshot, privacy, store_version_id,
                     review_revision, needs_attention, embedding_status, raw_json, overrides_json, search_text
                 ) VALUES (
-                    ?, ?, 'imp-pilot-1', 'plan-pilot', '/synthetic/root', ?, ?,
-                    ?, ?, ?, ?, 1024000, 1000000,
+                    ?, ?, 'imp-pilot-1', 'plan-pilot', ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?,
                     ?, ?, 1, ?, 'exif_timestamp',
                     1, 28.47, -81.45, 0, 'non_personal', ?,
                     0, 0, 'metadata_write_readback_passed', '{"review_reasons":[]}', '{}', ?
                 )
                 """,
                 (
-                    oid, mid, f"/synthetic/orig/{name}", name,
-                    mtype, mime, f"/synthetic/rec/{name}", f"fsha-{oid}",
+                    oid, mid, str(recovery_root), f"/synthetic/orig/{name}", name,
+                    mtype, mime, rec_path, f"fsha-{oid}", file_size, mtime_ns,
                     cap_utc, eff_date, eff_date, store_id, stext,
                 ),
             )

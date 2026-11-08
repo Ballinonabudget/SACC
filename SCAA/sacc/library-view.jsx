@@ -371,6 +371,17 @@ function FootwearSearchPilot({ api, accent }) {
               const shoeCount = (item.shoes || []).length;
               return (
                 <article key={item.id} className="sl-pilot-card">
+                  {item.asset_url && (
+                    <div className="sl-pilot-thumb-wrap">
+                      <img
+                        className="sl-pilot-thumb"
+                        src={item.asset_url}
+                        alt={item.display_title || item.original_name}
+                        loading="lazy"
+                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                      />
+                    </div>
+                  )}
                   <div className="sl-pilot-card-header">
                     <div className="sl-pilot-card-title-row">
                       <span className={`sl-pilot-type-pill ${isWall ? 'wall' : 'solo'}`}>
@@ -628,6 +639,9 @@ const SACC_LIBRARY_CSS = `
 
 .sl-pilot-results-container{flex:1;min-height:0}
 .sl-pilot-cards-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));gap:14px;padding-bottom:24px}
+.sl-pilot-thumb-wrap{width:100%;height:180px;background:#f0ede7;border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center;border:1px solid #e5e2dc}
+.sl-pilot-thumb{width:100%;height:100%;object-fit:cover;display:block}
+
 .sl-pilot-card{background:#fff;border:1px solid #ded8ce;border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:12px;box-shadow:0 1px 3px rgba(0,0,0,0.04);transition:transform 0.1s ease, box-shadow 0.1s ease}
 .sl-pilot-card:hover{border-color:#bcb5aa;box-shadow:0 3px 8px rgba(0,0,0,0.07)}
 

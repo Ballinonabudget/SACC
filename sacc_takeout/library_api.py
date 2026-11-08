@@ -157,7 +157,13 @@ def detail(oid:str,request:Request):_authorize(request);return _call(LibraryDB()
 
 @router.get('/assets/{oid}')
 def asset(oid:str,request:Request,download:bool=False):
-    _authorize(request);a=_call(LibraryDB().asset,oid)
+    _authorize(request)
+    def _fetch():
+        try:
+            return LibraryDB().asset(oid)
+        except (KeyError, ValueError):
+            return get_pilot_db().asset(oid)
+    a=_call(_fetch)
     safe=a['mime_type'] in {'image/jpeg','image/png','image/gif','image/webp','video/mp4','video/quicktime'}
     return FileResponse(a['path'],media_type=a['mime_type'] if safe else 'application/octet-stream',filename=a['name'],
         content_disposition_type='attachment' if download or not safe else 'inline',
