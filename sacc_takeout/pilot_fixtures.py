@@ -58,6 +58,8 @@ def create_pilot_database(db_path: Optional[Path] = None) -> Path:
              "Basketball", "Kobe 9 Elite Perspective", json.dumps(["Kobe IX", "Perspective 9"])),
             ("shoe_kobe_11_mamba", "Nike", "Kobe", "Kobe 11", "Mambacurial", "844130-102",
              "Basketball", "Kobe 11 Mambacurial", json.dumps(["Mambacurial", "Kobe XI FC"])),
+            ("shoe_lebron_12_low", "Nike", "LeBron", "LeBron 12 Low", "Court Purple", "724557-565",
+             "Basketball", "LeBron 12 Low Court Purple", json.dumps(["LeBron XII Low", "LBJ 12 Low", "LeBron 12 Low Court Purple", "724557-565", "724557 565"])),
             ("shoe_kd_8_hunt", "Nike", "KD", "KD 8", "Hunt's Hill Sunrise", "749375-807",
              "Basketball", "KD 8 Hunt's Hill Sunrise", json.dumps(["KD8", "Sunrise"])),
             ("shoe_lebron_13_written", "Nike", "LeBron", "LeBron 13", "Written in the Stars", "807219-500",
@@ -92,55 +94,76 @@ def create_pilot_database(db_path: Optional[Path] = None) -> Path:
 
         occurrences = [
             # 1. Solo camera shot: Kobe 11 Bruce Lee at Marketplace (May 2016)
-            ("occ_kobe11_may16", "med_1", "IMG_7995.JPG",
-             "fcaa8b9fcfd74549d07695117315f5076f5ee51a1e78e5f217422968d2572bdd.jpg",
-             "image", "image/jpeg", "2016-05-14T15:30:00Z", "2016-05-14", "store-mkt",
-             "in_store_photo", "Apple iPhone 6", "3264×2448",
+            ("occ_kobe11_may16", "med_1", "Kobe(1).png",
+             "0a89a16abd87f4c13b291fcb1f2530ce8be46266bd6c6d393ee84b1f718fcd1c.png",
+             "image", "image/png", "2016-05-14T15:30:00Z", "2016-05-14", "store-mkt",
+             "in_store_photo", "Apple iPhone 8 Plus", "4032×3024",
              "Kobe 11 Bruce Lee Marketplace May 2016 In-Store Sighting"),
 
             # 2. Repeat camera sighting: Kobe 11 Bruce Lee at Marketplace (August 2016) with price drop
-            ("occ_kobe11_aug16", "med_2", "IMG_7996.JPG",
-             "ef1fe9beb16a8a8d5889ea94415e5b3422dcb833ba83619f099dcd02570842c7.jpg",
-             "image", "image/jpeg", "2016-08-22T17:15:00Z", "2016-08-22", "store-mkt",
-             "in_store_photo", "Apple iPhone 6", "3264×2448",
+            ("occ_kobe11_aug16", "med_2", "Kobe.png",
+             "497278057f4e48c21e2c9067f446e01b4fd9240ad97a9e9811620c57dde8544d.png",
+             "image", "image/png", "2016-08-22T17:15:00Z", "2016-08-22", "store-mkt",
+             "in_store_photo", "Apple iPhone", "4032×3024",
              "Kobe 11 Bruce Lee Marketplace August 2016 Clearance Repeat Sighting"),
 
             # 3. Wall camera shot: Nike Multiples (Kobe 11 + KD 8 + LeBron 13) at Marketplace (June 2016)
-            ("occ_wall_june16", "med_3", "IMG_7999.JPG",
-             "998cba2e33e75cbeaf828a00e2dd42f1a2c8f4fbd13d831cdddad2085c3e47ca.jpg",
-             "image", "image/jpeg", "2016-06-18T14:00:00Z", "2016-06-18", "store-mkt",
-             "in_store_photo", "Apple iPhone 6", "3264×2448",
+            ("occ_wall_june16", "med_3", "Kobe(2).png",
+             "768f1452453bf6739e4a3b52e550478a3924480de82ff571f546cc18c0ba3a18.png",
+             "image", "image/png", "2016-06-18T14:00:00Z", "2016-06-18", "store-mkt",
+             "in_store_photo", "Apple iPhone", "1466×836",
              "Nike Basketball Clearance Wall June 2016 Multiple Shoes Shelf View"),
 
             # 4. Solo camera shot: Kobe 9 Elite at I-Drive (July 2015)
-            ("occ_kobe9_jul15", "med_4", "IMG_8008.JPG",
-             "72442968340278d28379e3560a331e62296ddce6f6a91cfa5928813fa6fd86fc.jpg",
-             "image", "image/jpeg", "2015-07-10T11:45:00Z", "2015-07-10", "store-idr",
-             "in_store_photo", "Apple iPhone 6", "3264×2448",
+            ("occ_kobe9_jul15", "med_4", "Kobe_AD_ID_final_side.png",
+             "c14373c142d1180fd2ed3958f1aa6f0b16119b720d914ac2f6c271159f811316.png",
+             "image", "image/png", "2015-07-10T11:45:00Z", "2015-07-10", "store-idr",
+             "studio_cutout", "Studio Render (Cutout)", "640×640",
              "Kobe 9 Elite Perspective I-Drive July 2015 In-Store Sighting"),
 
-            # 5. Solo camera shot: Air Jordan 11 Concord at I-Drive (December 2018)
+            # 5. Authentic in-store camera shot: LeBron 12 Low Box Label at Marketplace (Jan 2016)
+            ("occ_lebron12_box_jan16", "med_lb12_box", "IMG_7995.JPG",
+             "fcaa8b9fcfd74549d07695117315f5076f5ee51a1e78e5f217422968d2572bdd.jpg",
+             "image", "image/jpeg", "2016-01-01T22:47:05Z", "2016-01-01", "store-mkt",
+             "in_store_photo", "Apple iPhone 6", "3264×2448",
+             "LeBron 12 Low Court Purple Marketplace Box Label 724557-565 In-Store"),
+
+            # 6. Authentic in-store camera shot: LeBron 12 Low Pair Sighting with Crown Logo at Marketplace (Jan 2016)
+            ("occ_lebron12_pair_jan16", "med_lb12_pair", "IMG_7999.JPG",
+             "998cba2e33e75cbeaf828a00e2dd42f1a2c8f4fbd13d831cdddad2085c3e47ca.jpg",
+             "image", "image/jpeg", "2016-01-01T22:51:59Z", "2016-01-01", "store-mkt",
+             "in_store_photo", "Apple iPhone 6", "3264×2448",
+             "LeBron 12 Low Court Purple Marketplace Pair Sighting Crown Logo In-Store"),
+
+            # 7. Authentic in-store camera shot: LeBron 12 Low Clearance Markdown at Marketplace (Aug 2016)
+            ("occ_lebron12_rep_aug16", "med_lb12_rep", "IMG_7996.JPG",
+             "ef1fe9beb16a8a8d5889ea94415e5b3422dcb833ba83619f099dcd02570842c7.jpg",
+             "image", "image/jpeg", "2016-08-22T17:15:00Z", "2016-08-22", "store-mkt",
+             "in_store_photo", "Apple iPhone 6", "3264×2448",
+             "LeBron 12 Low Court Purple Marketplace Clearance Repeat Sighting 724557-565"),
+
+            # 8. Solo camera shot: Air Jordan 11 Concord at I-Drive (December 2018)
             ("occ_aj11_dec18", "med_5", "IMG_8009.JPG",
              "6480140833f78c3084779507c1e5e8da3121e760699d0e1b06a942a1211e5ab8.jpg",
              "image", "image/jpeg", "2018-12-08T16:20:00Z", "2018-12-08", "store-idr",
              "in_store_photo", "Apple iPhone 6", "3264×2448",
              "Air Jordan 11 Concord I-Drive December 2018 In-Store Sighting"),
 
-            # 6. Wall camera shot: Jordan Multiples (AJ1 + AJ11) at I-Drive (November 2018)
+            # 9. Wall camera shot: Jordan Multiples (AJ1 + AJ11) at I-Drive (November 2018)
             ("occ_wall_nov18", "med_6", "IMG_8004.JPG",
              "1f15f2c1f33c35268b0bbfe52e1b5ac97e78275b4521d35b7fd93961ace7d2b0.jpg",
              "image", "image/jpeg", "2018-11-24T18:00:00Z", "2018-11-24", "store-idr",
              "in_store_photo", "Apple iPhone 6", "3264×2448",
              "Jordan Multiples Wall Display November 2018 In-Store"),
 
-            # 7. Studio Cutout: Kobe 11 Mambacurial at Marketplace (Background removed render)
+            # 10. Studio Cutout: Kobe 11 Mambacurial at Marketplace (Background removed render)
             ("occ_kobe11_undated", "med_7", "Kobe_AD_ID_final.png",
              "e279bc799af78c6f1fcff7cdc98b5228d945f250d354d03a61ff2b1bf9383163.png",
              "image", "image/png", None, None, "store-mkt",
              "studio_cutout", "Studio Render (Cutout)", "640×640",
              "Kobe 11 Mambacurial Marketplace Undated Studio Cutout"),
 
-            # 8. Studio Cutout: Ultraboost 3.0 Triple White (Background removed render)
+            # 11. Studio Cutout: Ultraboost 3.0 Triple White (Background removed render)
             ("occ_ub_oct17", "med_8", "Kobe_profile_render.png",
              "0c0be8945c6b47be9f80cc79faf07970ec79d77b42a0e098843b639bac15b165.png",
              "image", "image/png", "2017-10-15T13:10:00Z", "2017-10-15", "store-adi",
@@ -221,6 +244,11 @@ def create_pilot_database(db_path: Optional[Path] = None) -> Path:
 
             # 8. Solo: Adidas Ultraboost 3.0 (October 2017)
             ("assoc_8", "occ_ub_oct17", "shoe_ub_triple_white", "solo", None, 1.0, "Display table", 129.99),
+
+            # 9. Authentic In-Store LeBron 12 Low Sightings at Marketplace (Box Label, Crown Pair, Repeat Markdown)
+            ("assoc_lb12_box", "occ_lebron12_box_jan16", "shoe_lebron_12_low", "solo", None, 1.0, "Verified retail box label: LEBRON XII LOW (724557 565), MSRP $175.00", 175.00),
+            ("assoc_lb12_pair", "occ_lebron12_pair_jan16", "shoe_lebron_12_low", "solo", None, 1.0, "Retail box pair with visible LeBron James crown logo ('LJ')", 139.99),
+            ("assoc_lb12_rep", "occ_lebron12_rep_aug16", "shoe_lebron_12_low", "solo", None, 1.0, "Clearance rack repeat markdown", 99.99),
         ]
 
         con.executemany(

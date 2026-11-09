@@ -260,14 +260,17 @@ function FootwearSearchPilot({ api, accent }) {
         </div>
         <div className="sl-pilot-presets">
           <span className="sl-preset-label">Verification Presets:</span>
-          <button type="button" className="sl-pill-btn" onClick={() => setPreset('Kobe', 'store-mkt', ['2015', '2016'], 'in_store_photo')}>
-            📸 Kobe In-Store (Marketplace)
+          <button type="button" className="sl-pill-btn" onClick={() => setPreset('724557-565', 'store-mkt', ['2016'], 'in_store_photo')}>
+            👑 LeBron 12 Low (Box + Pair @ Marketplace)
           </button>
           <button type="button" className="sl-pill-btn" onClick={() => setPreset('Kobe', 'all', ['2015', '2016', '2017', '2018', 'undated'], 'studio_cutout')}>
             🎨 Kobe Studio Cutouts (Ref Renders)
           </button>
+          <button type="button" className="sl-pill-btn" onClick={() => setPreset('Kobe', 'store-mkt', ['2015', '2016'], 'in_store_photo')}>
+            📸 Kobe In-Store (Marketplace)
+          </button>
           <button type="button" className="sl-pill-btn" onClick={() => setPreset('822675-706', 'all', ['2015', '2016', '2017', '2018', 'undated'], 'all')}>
-            SKU: 822675-706 (Solo + Wall + Repeats)
+            SKU: 822675-706 (Kobe Bruce Lee)
           </button>
           <button type="button" className="sl-pill-btn" onClick={() => setPreset('Nike Multiples', 'all', ['2015', '2016', '2017', '2018', 'undated'], 'all')}>
             Wall Shot: Nike Multiples
@@ -280,7 +283,7 @@ function FootwearSearchPilot({ api, accent }) {
         <div className="sl-search sl-pilot-search-box">
           <span aria-hidden="true">⌕</span>
           <input
-            placeholder="Search by shoe line, model, colorway, or exact SKU (e.g. Kobe, Kobe 11, Bruce Lee, 822675-706)..."
+            placeholder="Search by shoe line, model, colorway, or exact SKU (e.g. LeBron, 724557-565, Kobe, Bruce Lee)..."
             value={q}
             onChange={e => setQ(e.target.value)}
           />

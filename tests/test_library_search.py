@@ -166,18 +166,39 @@ class LibrarySearchTests(unittest.TestCase):
 
     def test_capture_type_filtering_and_metadata(self):
         """In-store camera photos and studio cutouts are categorized and filterable."""
-        # Search Kobe with in-store camera photos only -> returns 4 in-store occurrences
+        # Search Kobe with in-store camera photos only -> returns 3 in-store occurrences
         res_instore = self.db.search_footwear(q="Kobe", capture_type="in_store_photo")
-        self.assertEqual(res_instore["total"], 4)
+        self.assertEqual(res_instore["total"], 3)
         for r in res_instore["results"]:
             self.assertEqual(r["capture_type"], "in_store_photo")
             self.assertIn("iPhone", r["camera_model"])
 
-        # Search Kobe with studio cutouts only -> returns 1 studio cutout
+        # Search Kobe with studio cutouts only -> returns 2 studio cutouts
         res_studio = self.db.search_footwear(q="Kobe", capture_type="studio_cutout")
-        self.assertEqual(res_studio["total"], 1)
-        self.assertEqual(res_studio["results"][0]["capture_type"], "studio_cutout")
-        self.assertEqual(res_studio["results"][0]["camera_model"], "Studio Render (Cutout)")
+        self.assertEqual(res_studio["total"], 2)
+        for r in res_studio["results"]:
+            self.assertEqual(r["capture_type"], "studio_cutout")
+            self.assertEqual(r["camera_model"], "Studio Render (Cutout)")
+
+    def test_lebron_12_low_box_and_pair_sighting(self):
+        """Search LeBron discovers authentic in-store box label and pair sightings at Marketplace."""
+        # Search exact SKU from box label
+        res_sku = self.db.search_footwear(q="724557-565", store="store-mkt")
+        self.assertEqual(res_sku["total"], 3)
+        
+        # Verify box label occurrence
+        box_card = next(r for r in res_sku["results"] if "IMG_7995.JPG" in r["original_name"])
+        self.assertEqual(box_card["display_title"], "LeBron 12 Low Court Purple")
+        self.assertEqual(box_card["capture_type"], "in_store_photo")
+        self.assertEqual(box_card["camera_model"], "Apple iPhone 6")
+        self.assertEqual(box_card["shoes"][0]["sku"], "724557-565")
+        self.assertEqual(box_card["shoes"][0]["price_observed"], 175.00)
+
+        # Verify pair sighting occurrence
+        pair_card = next(r for r in res_sku["results"] if "IMG_7999.JPG" in r["original_name"])
+        self.assertEqual(pair_card["display_title"], "LeBron 12 Low Court Purple")
+        self.assertEqual(pair_card["capture_type"], "in_store_photo")
+        self.assertEqual(pair_card["shoes"][0]["price_observed"], 139.99)
 
 
 if __name__ == "__main__":

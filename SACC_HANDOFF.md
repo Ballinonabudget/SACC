@@ -201,6 +201,17 @@
   - Added verification presets: `📸 Kobe In-Store (Marketplace)` and `🎨 Kobe Studio Cutouts (Ref Renders)`.
 - **Testing & Verification**: 116 of 116 tests passing, including dedicated capture type test `test_capture_type_filtering_and_metadata`. Live server tested on `http://127.0.0.1:5174`.
 
+### 29. Ground-Truth Fixture Correction & LeBron Box/Pair Verification (2026-11-09) [agent:antigravity]
+- **Ground-Truth Metadata Correction**:
+  - Resolved user-reported shoe/image mismatch where camera photos showing a clear **"LEBRON XII LOW"** box label (`724557 565`) and purple LeBron crown logo shoes were incorrectly attached to synthetic "Kobe 11 Bruce Lee" test cards.
+  - Added ground-truth shoe record `shoe_lebron_12_low` (Nike, LeBron, LeBron 12 Low, Court Purple, SKU `724557-565`, MSRP $175.00).
+  - Attached authentic in-store photos `IMG_7995.JPG` (box label) and `IMG_7999.JPG` (in-box pair sighting with crown logo) to their true LeBron 12 Low records.
+  - Linked authentic Kobe reference images (`0a89a16...`, `497278...`, `e279bc...`) to Kobe occurrences so Kobe searches display actual Kobe footwear.
+- **UI & Presets Updated (`SCAA/sacc/library-view.jsx`)**:
+  - Added instant preset `👑 LeBron 12 Low (Box + Pair @ Marketplace)` searching SKU `724557-565` and `LeBron`.
+  - Bumped script query string to `library-view.jsx?v=5`.
+- **Testing & Verification**: 117 of 117 tests passing (`PYTHONPATH=tests:. .venv-poc-313/bin/python -m unittest discover tests`), including `test_lebron_12_low_box_and_pair_sighting`. Staging database `sacc-library-pilot.sqlite3` re-seeded. Live catalog remained untouched.
+
 ---
 
 ## Do Not Change / Guardrails
