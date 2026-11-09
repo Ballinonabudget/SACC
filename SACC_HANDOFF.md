@@ -212,6 +212,29 @@
   - Bumped script query string to `library-view.jsx?v=5`.
 - **Testing & Verification**: 117 of 117 tests passing (`PYTHONPATH=tests:. .venv-poc-313/bin/python -m unittest discover tests`), including `test_lebron_12_low_box_and_pair_sighting`. Staging database `sacc-library-pilot.sqlite3` re-seeded. Live catalog remained untouched.
 
+### 30. Full Marketplace Photo Scan & Local Sneaker Discovery (2026-11-09) [agent:antigravity]
+- **Built Local-First Recognition Engine (`sacc_photo_recognizer.py` & `scripts/scan_marketplace_photos.py`)**:
+  - Native Swift Apple Vision OCR engine (`scripts/apple_vision_ocr.swift` -> `bin/apple_vision_ocr`) extracting text, barcodes, 9-digit Nike/Jordan SKUs, categories, and clearance prices at 16–20 photos/second locally on Apple Silicon.
+  - Local YOLO-World and CLIP ViT-B/32 on Apple Silicon MPS for object bounds, signature logo detection, and silhouette embedding.
+  - Zero cloud API calls, zero cost ($0.00).
+- **Scan Results across 3,161 Marketplace Store Photos (Nike Clearance Store - Marketplace)**:
+  - Processed all 3,161 high-resolution camera photos in 192.5 seconds (3.2 minutes).
+  - Extracted 533 observed clearance price tags and 22 exact manufacturer style codes.
+  - Identified 391 distinct shopping visit sessions via temporal clustering (5-minute delta).
+  - **Authentic Discovered Sneaker Models**:
+    - **Nike Kobe IX Elite** (SKU `630847-077`, clearance price $199.99 from $225 MSRP on 2015-12-17 in `IMG_6604.JPG`).
+    - **Nike LeBron XII Low** (SKU `724557-565`, clearance price $139.99 on 2016-01-01 in `IMG_7995.JPG` and `IMG_7999.JPG`).
+    - **Air Jordan 13 Retro** (SKU `414571-038`).
+    - **Air Jordan 1 Mid** (SKU `554724-030` and `554724-271`).
+    - **Nike KD 8** (SKU `811363-123` in `IMG_6606.JPG`).
+    - **Nike Air Max Lunar90** (SKU `705302-003`).
+    - **Nike Free 3.0 Flyknit** (SKU `718418-002`, $140.00).
+    - **Nike Air Max TR180 AMP** (SKU `723973-002`, $104.99).
+    - **Timberland Eurohiker** (SKU `TB06529A`).
+- **Database & Safety**:
+  - Stored in table `library_photo_recognitions` inside private staging catalog `/Users/daplug/Documents/SACC_Data/library/staging/sacc-library-pilot.sqlite3`.
+  - Production catalog `sacc-library.sqlite3` and source media remained 100% untouched.
+
 ---
 
 ## Do Not Change / Guardrails
