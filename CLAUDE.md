@@ -347,3 +347,8 @@ This has been updated to `/Users/daplug/Documents/SACC/API_Ready_HEVC.compressor
 It has been copied to `/Users/daplug/Documents/SACC/sneaker_schema.py`.
 The Downloads copies at `/Users/miniman/Downloads/sneaker_schema.py` and
 `/Users/miniman/Downloads/Claude Code/sneaker_schema.py` are now redundant.
+
+---
+
+## Shared Local AI Toolkit
+A shared local toolkit is configured at `~/local-ai-toolkit/` for zero-cost, offline AI operations (Apple Vision OCR/barcodes, DINOv2 visual similarity, SigLIP embeddings, and local Ollama VLM). See full registry and usage examples in `docs/TOOLKIT_REGISTRY.md`.
