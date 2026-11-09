@@ -187,6 +187,20 @@
 - **Where to Open**: `http://localhost:5174/SACC.html` -> **Library** tab -> **Footwear Search Pilot (Staging)**.
 - **Primary Verification Query**: Search `Kobe`, select store `Nike Clearance Store - Marketplace`, check capture years `2015` and `2016`. Result: 3 distinct sightings (2 solo sightings with price drop, 1 three-shoe wall shot).
 
+### 28. Capture Type Discrimination & Authentic In-Store Photo Swap (2026-11-09) [agent:antigravity]
+- **Capture Type Schema & Backend Filtering**:
+  - Added additive schema fields to occurrences in `sacc_takeout/library_search.py`: `capture_type` (`in_store_photo` vs `studio_cutout`), `camera_model`, and `photo_resolution`.
+  - Added `capture_type` filtering (`all`, `in_store_photo`, `studio_cutout`) across `LibraryDB.search_footwear()`, faceted breakdown `capture_types`, and API endpoints `/api/library/pilot/search` and `/api/library/pilot/facets`.
+- **Photo Fixture Swap**:
+  - Swapped pilot occurrences to use authentic 3264×2448 RGB camera photos taken with an Apple iPhone 6 at the Nike Clearance Store - Marketplace (`28.4763, -81.4492`) from the recovered media pool (`fcaa8b...jpg`, `ef1fe...jpg`, `998cb...jpg`).
+  - Retained studio reference cutouts (`e279bc...png`, `0c0be...png`) with `capture_type = 'studio_cutout'` to test side-by-side discrimination.
+  - Re-seeded `/Users/daplug/Documents/SACC_Data/library/staging/sacc-library-pilot.sqlite3`. Live catalog remained 100% untouched.
+- **UI Enhancements (`SCAA/sacc/library-view.jsx`)**:
+  - Added `Capture Type` dropdown filter (`All Captures`, `📸 In-Store Photos Only`, `🎨 Studio Cutouts / Renders`).
+  - Added visual card badges (`📸 In-Store Photo` green pill vs `🎨 Studio Cutout` purple pill) and camera hardware/resolution tags (`📷 Apple iPhone 6 · 3264×2448`).
+  - Added verification presets: `📸 Kobe In-Store (Marketplace)` and `🎨 Kobe Studio Cutouts (Ref Renders)`.
+- **Testing & Verification**: 116 of 116 tests passing, including dedicated capture type test `test_capture_type_filtering_and_metadata`. Live server tested on `http://127.0.0.1:5174`.
+
 ---
 
 ## Do Not Change / Guardrails

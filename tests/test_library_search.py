@@ -163,10 +163,21 @@ class LibrarySearchTests(unittest.TestCase):
             fdata = facets_res.json()
             self.assertTrue(any(y["value"] == "2016" for y in fdata["years"]))
             self.assertTrue(any(s["code"] == "ORL-MKT-CLR" for s in fdata["stores"]))
-            self.assertEqual(facets_res.status_code, 200)
-            fdata = facets_res.json()
-            self.assertTrue(any(y["value"] == "2016" for y in fdata["years"]))
-            self.assertTrue(any(s["code"] == "ORL-MKT-CLR" for s in fdata["stores"]))
+
+    def test_capture_type_filtering_and_metadata(self):
+        """In-store camera photos and studio cutouts are categorized and filterable."""
+        # Search Kobe with in-store camera photos only -> returns 4 in-store occurrences
+        res_instore = self.db.search_footwear(q="Kobe", capture_type="in_store_photo")
+        self.assertEqual(res_instore["total"], 4)
+        for r in res_instore["results"]:
+            self.assertEqual(r["capture_type"], "in_store_photo")
+            self.assertIn("iPhone", r["camera_model"])
+
+        # Search Kobe with studio cutouts only -> returns 1 studio cutout
+        res_studio = self.db.search_footwear(q="Kobe", capture_type="studio_cutout")
+        self.assertEqual(res_studio["total"], 1)
+        self.assertEqual(res_studio["results"][0]["capture_type"], "studio_cutout")
+        self.assertEqual(res_studio["results"][0]["camera_model"], "Studio Render (Cutout)")
 
 
 if __name__ == "__main__":

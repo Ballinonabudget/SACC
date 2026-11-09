@@ -161,6 +161,7 @@ function LibraryDetail({data,loading,error,onClose,onSelect,stores,api,onSaved,o
 function FootwearSearchPilot({ api, accent }) {
   const [q, setQ] = React.useState('Kobe');
   const [store, setStore] = React.useState('store-mkt');
+  const [captureType, setCaptureType] = React.useState('all');
   const [selectedYears, setSelectedYears] = React.useState(['2015', '2016']);
   const [availableYears, setAvailableYears] = React.useState(['2015', '2016', '2017', '2018', 'undated']);
   const [availableStores, setAvailableStores] = React.useState([
@@ -176,7 +177,11 @@ function FootwearSearchPilot({ api, accent }) {
 
   const loadFacets = React.useCallback(async () => {
     try {
-      const data = await api('/pilot/facets?q=' + encodeURIComponent(q) + (store !== 'all' ? '&store=' + encodeURIComponent(store) : ''));
+      const qParams = new URLSearchParams();
+      if (q.trim()) qParams.set('q', q.trim());
+      if (store !== 'all') qParams.set('store', store);
+      if (captureType !== 'all') qParams.set('capture_type', captureType);
+      const data = await api('/pilot/facets?' + qParams.toString());
       if (data && data.stores && data.stores.length) {
         setAvailableStores([
           { id: 'all', label: 'All stores' },
@@ -190,7 +195,7 @@ function FootwearSearchPilot({ api, accent }) {
     } catch (e) {
       // ignore facet fetch errors
     }
-  }, [api, q, store]);
+  }, [api, q, store, captureType]);
 
   const doSearch = React.useCallback(async () => {
     setLoading(true);
@@ -199,6 +204,7 @@ function FootwearSearchPilot({ api, accent }) {
       const params = new URLSearchParams();
       if (q.trim()) params.set('q', q.trim());
       if (store && store !== 'all') params.set('store', store);
+      if (captureType && captureType !== 'all') params.set('capture_type', captureType);
       params.set('years', selectedYears.join(','));
       params.set('limit', '50');
 
@@ -210,7 +216,7 @@ function FootwearSearchPilot({ api, accent }) {
     } finally {
       setLoading(false);
     }
-  }, [api, q, store, selectedYears]);
+  }, [api, q, store, captureType, selectedYears]);
 
   React.useEffect(() => {
     loadFacets();
@@ -233,10 +239,11 @@ function FootwearSearchPilot({ api, accent }) {
   const selectAllYears = () => setSelectedYears([...availableYears]);
   const clearAllYears = () => setSelectedYears([]);
 
-  const setPreset = (presetQ, presetStore, presetYears) => {
+  const setPreset = (presetQ, presetStore, presetYears, presetCtype) => {
     setQ(presetQ);
     if (presetStore !== undefined) setStore(presetStore);
     if (presetYears !== undefined) setSelectedYears(presetYears);
+    if (presetCtype !== undefined) setCaptureType(presetCtype);
   };
 
   return (
@@ -248,21 +255,21 @@ function FootwearSearchPilot({ api, accent }) {
           <strong>Footwear Library Search Engine (Private Staging)</strong>
           <p>
             Search footwear occurrences across solo shots and multi-shoe wall displays.
-            Isolated synthetic test catalog <code>sacc-library-pilot.sqlite3</code> with zero mutation to live catalog.
+            Distinguishes authentic in-store camera captures from studio cutouts / background-removed reference graphics.
           </p>
         </div>
         <div className="sl-pilot-presets">
           <span className="sl-preset-label">Verification Presets:</span>
-          <button type="button" className="sl-pill-btn" onClick={() => setPreset('Kobe', 'store-mkt', ['2015', '2016'])}>
-            Kobe (2015+2016 @ Marketplace)
+          <button type="button" className="sl-pill-btn" onClick={() => setPreset('Kobe', 'store-mkt', ['2015', '2016'], 'in_store_photo')}>
+            📸 Kobe In-Store (Marketplace)
           </button>
-          <button type="button" className="sl-pill-btn" onClick={() => setPreset('822675-706', 'all', ['2015', '2016', '2017', '2018', 'undated'])}>
+          <button type="button" className="sl-pill-btn" onClick={() => setPreset('Kobe', 'all', ['2015', '2016', '2017', '2018', 'undated'], 'studio_cutout')}>
+            🎨 Kobe Studio Cutouts (Ref Renders)
+          </button>
+          <button type="button" className="sl-pill-btn" onClick={() => setPreset('822675-706', 'all', ['2015', '2016', '2017', '2018', 'undated'], 'all')}>
             SKU: 822675-706 (Solo + Wall + Repeats)
           </button>
-          <button type="button" className="sl-pill-btn" onClick={() => setPreset('Bruce Lee', 'all', ['2015', '2016', '2017', '2018', 'undated'])}>
-            Colorway: Bruce Lee
-          </button>
-          <button type="button" className="sl-pill-btn" onClick={() => setPreset('Nike Multiples', 'all', ['2015', '2016', '2017', '2018', 'undated'])}>
+          <button type="button" className="sl-pill-btn" onClick={() => setPreset('Nike Multiples', 'all', ['2015', '2016', '2017', '2018', 'undated'], 'all')}>
             Wall Shot: Nike Multiples
           </button>
         </div>
@@ -283,7 +290,7 @@ function FootwearSearchPilot({ api, accent }) {
         </div>
       </div>
 
-      {/* Filter controls: Store and Multi-Year Checkboxes */}
+      {/* Filter controls: Store, Capture Type and Multi-Year Checkboxes */}
       <div className="sl-pilot-filters-card">
         <div className="sl-pilot-filter-group">
           <label className="sl-pilot-label">Store Location</label>
@@ -297,6 +304,19 @@ function FootwearSearchPilot({ api, accent }) {
                 {s.label}{s.code ? ` (${s.code})` : ''}
               </option>
             ))}
+          </select>
+        </div>
+
+        <div className="sl-pilot-filter-group">
+          <label className="sl-pilot-label">Capture Type</label>
+          <select
+            className="sl-pilot-select"
+            value={captureType}
+            onChange={e => setCaptureType(e.target.value)}
+          >
+            <option value="all">All Captures</option>
+            <option value="in_store_photo">📸 In-Store Photos Only</option>
+            <option value="studio_cutout">🎨 Studio Cutouts / Renders</option>
           </select>
         </div>
 
@@ -336,7 +356,7 @@ function FootwearSearchPilot({ api, accent }) {
           {loading ? 'Searching catalog…' : `${total} matching sighting${total === 1 ? '' : 's'}`}
         </span>
         <span className="sl-pilot-subtext">
-          Repeat sightings and wall shot shoes are indexed and returned separately with capture month and year.
+          In-store camera photos and background-removed studio cutouts cataloged and categorized separately.
         </span>
       </div>
 
@@ -356,9 +376,9 @@ function FootwearSearchPilot({ api, accent }) {
             <p>
               {selectedYears.length === 0
                 ? 'Check one or more capture years to see occurrences.'
-                : 'Try adjusting your search query, store filter, or selected capture years.'}
+                : 'Try adjusting your search query, store filter, capture type, or selected capture years.'}
             </p>
-            <button className="sl-button" onClick={() => { setQ('Kobe'); setStore('all'); selectAllYears(); }}>
+            <button className="sl-button" onClick={() => { setQ('Kobe'); setStore('all'); setCaptureType('all'); selectAllYears(); }}>
               Reset to All Kobe Sightings
             </button>
           </div>
@@ -369,6 +389,7 @@ function FootwearSearchPilot({ api, accent }) {
             {results.map(item => {
               const isWall = item.is_wall_shot;
               const shoeCount = (item.shoes || []).length;
+              const isInStore = item.capture_type === 'in_store_photo';
               return (
                 <article key={item.id} className="sl-pilot-card">
                   {item.asset_url && (
@@ -380,6 +401,9 @@ function FootwearSearchPilot({ api, accent }) {
                         loading="lazy"
                         onError={(e) => { e.currentTarget.style.display = 'none'; }}
                       />
+                      <span className={`sl-pilot-photo-tag ${isInStore ? 'in-store' : 'studio'}`}>
+                        {isInStore ? '📸 In-Store Photo' : '🎨 Studio Cutout'}
+                      </span>
                     </div>
                   )}
                   <div className="sl-pilot-card-header">
@@ -397,6 +421,12 @@ function FootwearSearchPilot({ api, accent }) {
                       <span>{item.store ? item.store.label : 'Store not confirmed'}</span>
                       {item.store?.code && <small> ({item.store.code})</small>}
                     </div>
+                    {item.camera_model && (
+                      <div className="sl-pilot-camera-tag">
+                        <span>📷 {item.camera_model}</span>
+                        {item.photo_resolution && <small>· {item.photo_resolution}</small>}
+                      </div>
+                    )}
                   </div>
 
                   <div className="sl-pilot-card-shoes">
@@ -618,7 +648,7 @@ const SACC_LIBRARY_CSS = `
 .sl-pilot-search-box{background:#fff;border:1px solid #dcd7cf;border-radius:8px;padding:0 12px;box-shadow:0 1px 2px rgba(0,0,0,0.03)}
 .sl-pilot-search-box input{padding:12px 0;font-size:13px}
 
-.sl-pilot-filters-card{display:grid;grid-template-columns:280px 1fr;gap:16px;background:#fff;border:1px solid #e5e2dc;border-radius:8px;padding:14px 16px}
+.sl-pilot-filters-card{display:grid;grid-template-columns:220px 190px 1fr;gap:16px;background:#fff;border:1px solid #e5e2dc;border-radius:8px;padding:14px 16px}
 .sl-pilot-filter-group{display:flex;flex-direction:column;gap:6px}
 .sl-pilot-label{font-size:10px;font-weight:700;letter-spacing:0.04em;color:#766d60;text-transform:uppercase}
 .sl-pilot-select{height:34px;border:1px solid #dcd7cf;border-radius:6px;padding:0 8px;font-size:11px;background:#fff;color:#1c1c1e}
@@ -639,8 +669,13 @@ const SACC_LIBRARY_CSS = `
 
 .sl-pilot-results-container{flex:1;min-height:0}
 .sl-pilot-cards-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));gap:14px;padding-bottom:24px}
-.sl-pilot-thumb-wrap{width:100%;height:180px;background:#f0ede7;border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center;border:1px solid #e5e2dc}
+.sl-pilot-thumb-wrap{position:relative;width:100%;height:200px;background:#f0ede7;border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center;border:1px solid #e5e2dc}
 .sl-pilot-thumb{width:100%;height:100%;object-fit:cover;display:block}
+.sl-pilot-photo-tag{position:absolute;bottom:8px;left:8px;font-size:9px;font-weight:700;border-radius:4px;padding:3px 7px;text-transform:uppercase;letter-spacing:0.04em}
+.sl-pilot-photo-tag.in-store{background:rgba(21,128,61,0.92);color:#fff;box-shadow:0 1px 4px rgba(0,0,0,0.25)}
+.sl-pilot-photo-tag.studio{background:rgba(126,34,206,0.92);color:#fff;box-shadow:0 1px 4px rgba(0,0,0,0.25)}
+.sl-pilot-camera-tag{display:flex;align-items:center;gap:4px;font-size:10px;color:#766d60;margin-top:3px;font-weight:500}
+.sl-pilot-camera-tag small{color:#9c9489}
 
 .sl-pilot-card{background:#fff;border:1px solid #ded8ce;border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:12px;box-shadow:0 1px 3px rgba(0,0,0,0.04);transition:transform 0.1s ease, box-shadow 0.1s ease}
 .sl-pilot-card:hover{border-color:#bcb5aa;box-shadow:0 3px 8px rgba(0,0,0,0.07)}

@@ -58,6 +58,13 @@ _MONTH_NAMES = [
 def ensure_catalog_schema(con: sqlite3.Connection) -> None:
     """Ensure catalog and association tables exist."""
     con.executescript(CATALOG_SCHEMA)
+    cols = {r[1] for r in con.execute("PRAGMA table_info(library_occurrences)").fetchall()}
+    if "capture_type" not in cols:
+        con.execute("ALTER TABLE library_occurrences ADD COLUMN capture_type TEXT DEFAULT 'in_store_photo'")
+    if "camera_model" not in cols:
+        con.execute("ALTER TABLE library_occurrences ADD COLUMN camera_model TEXT DEFAULT NULL")
+    if "photo_resolution" not in cols:
+        con.execute("ALTER TABLE library_occurrences ADD COLUMN photo_resolution TEXT DEFAULT NULL")
 
 
 def format_month_year(date_str: Optional[str]) -> Tuple[str, Optional[str], Optional[int]]:
@@ -89,6 +96,7 @@ def search_footwear(
     q: str = "",
     years: Optional[List[str] | str] = None,
     store: str = "all",
+    capture_type: str = "all",
     limit: int = 30,
     offset: int = 0,
 ) -> Dict[str, Any]:
@@ -102,6 +110,7 @@ def search_footwear(
       * If years contains 'all' or is None, all years are included.
       * 'undated' matches occurrences where effective_date IS NULL.
     - Store narrows to confirmed branch id.
+    - Capture type distinguishes in-store camera sightings vs. background-removed studio cutouts / stock renders.
     - Deduplicates by occurrence so multi-shoe wall shots return once with all tags attached.
     - Preserves distinct sightings across dates (repeat sightings at same store appear separately).
     """
@@ -125,7 +134,7 @@ def search_footwear(
                 "total": 0,
                 "limit": limit,
                 "offset": offset,
-                "facets": _compute_facets(con, q=q, store=store),
+                "facets": _compute_facets(con, q=q, store=store, capture_type=capture_type),
             }
 
     where_clauses: List[str] = []
@@ -150,7 +159,7 @@ def search_footwear(
                 "total": 0,
                 "limit": limit,
                 "offset": offset,
-                "facets": _compute_facets(con, q=q, store=store),
+                "facets": _compute_facets(con, q=q, store=store, capture_type=capture_type),
             }
 
     # 3. Store filter
@@ -160,6 +169,11 @@ def search_footwear(
         else:
             where_clauses.append("o.store_version_id = ?")
             params.append(store)
+
+    # 4. Capture Type filter (in_store_photo vs studio_cutout)
+    if capture_type and capture_type not in ("all", "", None):
+        where_clauses.append("COALESCE(o.capture_type, 'in_store_photo') = ?")
+        params.append(capture_type)
 
     # 4. Shoe Query (q)
     raw_q = (q or "").strip()
@@ -226,7 +240,7 @@ def search_footwear(
         if occurrence:
             results.append(occurrence)
 
-    facets = _compute_facets(con, q=raw_q, store=store, active_years=parsed_years)
+    facets = _compute_facets(con, q=raw_q, store=store, capture_type=capture_type, active_years=parsed_years)
 
     return {
         "results": results,
@@ -243,7 +257,8 @@ def _build_occurrence_search_card(con: sqlite3.Connection, oid: str) -> Optional
         """
         SELECT o.id, o.media_id, o.original_name, o.media_type, o.mime_type,
                o.effective_date, o.capture_utc, o.store_version_id, o.privacy,
-               o.recovered_path, o.file_size_bytes
+               o.recovered_path, o.file_size_bytes,
+               o.capture_type, o.camera_model, o.photo_resolution
         FROM library_occurrences o
         WHERE o.id = ?
         """,
@@ -321,6 +336,8 @@ def _build_occurrence_search_card(con: sqlite3.Connection, oid: str) -> Optional
         "image/jpeg", "image/png", "image/gif", "image/webp", "video/mp4", "video/quicktime"
     }
 
+    ctype = r.get("capture_type") or ("studio_cutout" if r["mime_type"] == "image/png" else "in_store_photo")
+
     return {
         "id": r["id"],
         "media_id": r["media_id"],
@@ -338,6 +355,9 @@ def _build_occurrence_search_card(con: sqlite3.Connection, oid: str) -> Optional
         "shoes": shoes_list,
         "asset_url": f"/api/library/assets/{r['id']}",
         "preview_supported": preview_supported,
+        "capture_type": ctype,
+        "camera_model": r.get("camera_model"),
+        "photo_resolution": r.get("photo_resolution"),
     }
 
 
@@ -345,6 +365,7 @@ def _compute_facets(
     con: sqlite3.Connection,
     q: str = "",
     store: str = "all",
+    capture_type: str = "all",
     active_years: Optional[Set[str]] = None,
 ) -> Dict[str, Any]:
     """Compute facet breakdown for years, stores, and shoe lines matching current search."""
@@ -369,6 +390,10 @@ def _compute_facets(
         else:
             where_clauses.append("o.store_version_id = ?")
             params.append(store)
+
+    if capture_type and capture_type not in ("all", "", None):
+        where_clauses.append("COALESCE(o.capture_type, 'in_store_photo') = ?")
+        params.append(capture_type)
 
     where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
@@ -415,8 +440,25 @@ def _compute_facets(
     line_rows = con.execute(lines_sql, params).fetchall()
     facets_lines = [{"value": r[0] or "Unknown", "count": r[1]} for r in line_rows]
 
+    # 4. Capture Types facet
+    capture_types_sql = f"""
+    SELECT COALESCE(o.capture_type, 'in_store_photo') as ctype, COUNT(DISTINCT o.id)
+    FROM library_occurrences o
+    JOIN library_shoe_associations lsa ON lsa.occurrence_id = o.id
+    JOIN library_shoes s ON s.id = lsa.shoe_id
+    {where_sql}
+    GROUP BY ctype
+    ORDER BY ctype ASC
+    """
+    try:
+        ctype_rows = con.execute(capture_types_sql, params).fetchall()
+        facets_capture_types = [{"value": r[0], "count": r[1]} for r in ctype_rows]
+    except Exception:
+        facets_capture_types = []
+
     return {
         "years": facets_years,
         "stores": facets_stores,
         "lines": facets_lines,
+        "capture_types": facets_capture_types,
     }

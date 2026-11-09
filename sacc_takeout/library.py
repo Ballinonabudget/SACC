@@ -450,7 +450,7 @@ class LibraryDB:
                 changed+=cursor.rowcount
         return changed
 
-    def search_footwear(self, q='', years=None, store='all', limit=30, offset=0):
+    def search_footwear(self, q='', years=None, store='all', capture_type='all', limit=30, offset=0):
         from .library_search import search_footwear, ensure_catalog_schema
         with self.connection() as con:
             tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -458,5 +458,5 @@ class LibraryDB:
             with self.connection(write=True) as con:
                 ensure_catalog_schema(con)
         with self.connection() as con:
-            return search_footwear(con, q=q, years=years, store=store, limit=limit, offset=offset)
+            return search_footwear(con, q=q, years=years, store=store, capture_type=capture_type, limit=limit, offset=offset)
 
