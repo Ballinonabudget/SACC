@@ -1,4 +1,5 @@
 # Exclude media and heavy binaries
+bin/
 ffmpeg
 ffmpeg.zip
 ffprobe
