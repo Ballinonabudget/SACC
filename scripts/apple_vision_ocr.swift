@@ -23,8 +23,8 @@ for path in paths {
     }
     
     let request = VNRecognizeTextRequest()
-    request.recognitionLevel = .fast
-    request.usesLanguageCorrection = false
+    request.recognitionLevel = .accurate
+    request.usesLanguageCorrection = true
     let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
     try? handler.perform([request])
     

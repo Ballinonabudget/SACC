@@ -13,6 +13,7 @@ from .dinov2_similarity import embed_image, max_similarity
 from .gemini_identify import identify
 from .keyframe import extract_keyframes
 from .kicksdb_search import fetch_image, gallery_urls, search_by_description
+from .local_ocr_helper import check_frames_for_label
 from .verdict import classify
 from .video_metadata import is_plausible, video_capture_date, years_diff
 
@@ -30,6 +31,7 @@ def verify_clip(video_path: str,
                 n_frames: int = 12,
                 n_frames_to_gemini: int = 12,
                 use_bbox_crop: bool = False,
+                use_local_ocr: bool = True,
                 date_filter: bool = True,
                 date_window_years: float = 2.0,
                 verbose: bool = False) -> dict:
@@ -37,9 +39,10 @@ def verify_clip(video_path: str,
 
     Pipeline:
       1. Extract N evenly-spaced frames, sharpness-score them
-      2. Send top sharpest frames to Gemini, get back best frame + shoe_bbox + candidates
-      3. Crop chosen frame to shoe_bbox before DINOv2 embedding
-      4. Resolve candidates → KicksDB → DINOv2 → verdict
+      2. If use_local_ocr=True, fast-scan candidate frames with Apple Vision OCR & KicksDB
+      3. If no label verified, send top sharpest frames to Gemini, get back best frame + shoe_bbox + candidates
+      4. Crop chosen frame to shoe_bbox before DINOv2 embedding (optional)
+      5. Resolve candidates → KicksDB → DINOv2 → verdict
     """
     out: dict = {
         "video_path": str(video_path),
@@ -74,22 +77,54 @@ def verify_clip(video_path: str,
         chosen_frames = frames[:n_frames_to_gemini]
         gemini_inputs = [fr["path"] for fr in chosen_frames]
 
-        # ── Step 1: Gemini multi-frame identification ─────────────────────────
-        ident = identify(gemini_inputs, top_n=top_n_candidates)
-        out["candidates_raw"]    = ident.get("candidates", [])
-        out["label_visible"]     = ident.get("label_visible", False)
-        out["label_sku"]         = ident.get("label_sku", "")
-        out["best_frame_reason"] = ident.get("best_frame_reason", "")
-        candidates = list(ident.get("candidates", []))
+        # ── Step 0.5: Local Apple Vision OCR & KicksDB Pre-Check ──────────────
+        local_hit = None
+        if use_local_ocr:
+            local_hit = check_frames_for_label(chosen_frames, source=source, verbose=verbose)
 
-        # Resolve which input frame Gemini chose (it indexes into chosen_frames)
-        bfi = ident.get("best_frame_index", 0)
-        if 0 <= bfi < len(chosen_frames):
-            best_frame = chosen_frames[bfi]
+        if local_hit:
+            best_frame = local_hit["frame"]
+            sku = local_hit["sku"]
+            prod = local_hit["product"]
+            out["label_visible"] = True
+            out["label_sku"] = sku
+            out["best_frame_idx"] = best_frame["index"]
+            out["best_frame_time"] = best_frame["time_sec"]
+            out["best_frame_reason"] = f"Local Apple Vision OCR detected SKU {sku} (KicksDB verified)"
+            candidates = [{
+                "model": prod.get("shoe_name") or prod.get("name") or "(from label)",
+                "colorway": prod.get("colorway", ""),
+                "search_query": sku,
+                "model_only_query": prod.get("model", ""),
+                "year": str(prod.get("release_date") or ""),
+                "confidence": 1.0,
+                "_label_sku": sku,
+            }]
+            out["candidates_raw"] = candidates
+            out["path"] = "ocr"
+            ident = {
+                "shoe_bbox": None,
+                "candidates": candidates,
+                "best_frame_index": chosen_frames.index(best_frame) if best_frame in chosen_frames else 0,
+            }
         else:
-            best_frame = chosen_frames[0] if chosen_frames else None
-        out["best_frame_idx"]  = best_frame["index"] if best_frame else None
-        out["best_frame_time"] = best_frame["time_sec"] if best_frame else None
+            # ── Step 1: Gemini multi-frame identification ─────────────────────────
+            ident = identify(gemini_inputs, top_n=top_n_candidates)
+            out["candidates_raw"]    = ident.get("candidates", [])
+            out["label_visible"]     = ident.get("label_visible", False)
+            out["label_sku"]         = ident.get("label_sku", "")
+            out["best_frame_reason"] = ident.get("best_frame_reason", "")
+            candidates = list(ident.get("candidates", []))
+
+            # Resolve which input frame Gemini chose (it indexes into chosen_frames)
+            bfi = ident.get("best_frame_index", 0)
+            if 0 <= bfi < len(chosen_frames):
+                best_frame = chosen_frames[bfi]
+            else:
+                best_frame = chosen_frames[0] if chosen_frames else None
+            out["best_frame_idx"]  = best_frame["index"] if best_frame else None
+            out["best_frame_time"] = best_frame["time_sec"] if best_frame else None
+
         # Read the chosen frame bytes BEFORE cleanup so callers can save it
         if best_frame:
             try:
@@ -124,16 +159,17 @@ def verify_clip(video_path: str,
         if verbose:
             print(f"    best_frame_idx={out['best_frame_idx']} t={out['best_frame_time']} bbox={bbox}")
 
-        # If a SKU was read from a label, prepend it as the strongest candidate
+        # If a SKU was read from a label, prepend it as the strongest candidate if not already present
         if out["label_sku"]:
-            candidates.insert(0, {
-                "model":        "(from label)",
-                "colorway":     "",
-                "search_query": out["label_sku"],
-                "year":         "",
-                "confidence":   1.0,
-                "_label_sku":   out["label_sku"],
-            })
+            if not any(c.get("_label_sku") == out["label_sku"] for c in candidates):
+                candidates.insert(0, {
+                    "model":        "(from label)",
+                    "colorway":     "",
+                    "search_query": out["label_sku"],
+                    "year":         "",
+                    "confidence":   1.0,
+                    "_label_sku":   out["label_sku"],
+                })
             out["path"] = "ocr"
         else:
             out["path"] = "visual"
