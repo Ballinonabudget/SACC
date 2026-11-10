@@ -33,22 +33,9 @@ def create_pilot_database(db_path: Optional[Path] = None) -> Path:
         con.executescript(SCHEMA)
         ensure_catalog_schema(con)
 
-        # 1. Seed Stores
-        stores = [
-            ("store-mkt", "STORE-MKT", "ORL-MKT-CLR", "Nike Clearance Store - Marketplace",
-             "2014-01-01", "2025-12-31", json.dumps(["Marketplace", "Marketplace Clearance", "Nike Clearance"])),
-            ("store-idr", "STORE-IDR", "ORL-IDR-FAC", "Nike Factory Store - International Drive",
-             "2014-01-01", "2025-12-31", json.dumps(["I-Drive", "I Drive Factory", "Nike I-Drive"])),
-            ("store-adi", "STORE-ADI", "ORL-ADI-OUT", "Adidas Outlet - Orlando International",
-             "2015-01-01", "2025-12-31", json.dumps(["Adidas Outlet", "Adidas I-Drive"])),
-        ]
-        con.executemany(
-            """
-            INSERT INTO library_stores (id, store_id, code, label, valid_from, valid_to, aliases_json, payload_json, directory_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, '{}', 'dir-fixture-1')
-            """,
-            stores,
-        )
+        # 1. Seed Stores via Canonical Store Directory Resolver
+        from sacc_takeout.store_directory_resolver import seed_store_directory
+        seed_store_directory(con)
 
         # 2. Seed Shoes
         shoes = [
@@ -64,6 +51,20 @@ def create_pilot_database(db_path: Optional[Path] = None) -> Path:
              "Basketball", "KD 8 Hunt's Hill Sunrise", json.dumps(["KD8", "Sunrise"])),
             ("shoe_lebron_13_written", "Nike", "LeBron", "LeBron 13", "Written in the Stars", "807219-500",
              "Basketball", "LeBron 13 Written in the Stars", json.dumps(["LBJ13", "LeBron XIII"])),
+            ("shoe_kobe_9_elite", "Nike", "Kobe", "Kobe 9 Elite", "Wolf Grey/White", "630847-077",
+             "Basketball", "Kobe 9 Elite", json.dumps(["Kobe IX Elite", "Kobe 9 High", "630847-077"])),
+            ("shoe_aj13_retro", "Jordan", "Air Jordan", "Air Jordan 13 Retro", "Black/Gym Red", "414571-038",
+             "Basketball", "Air Jordan 13 Retro", json.dumps(["AJ13", "Jordan 13", "414571-038"])),
+            ("shoe_aj1_mid", "Jordan", "Air Jordan", "Air Jordan 1 Mid", "White/Cool Grey", "554724-030",
+             "Basketball", "Air Jordan 1 Mid", json.dumps(["AJ1 Mid", "Jordan 1 Mid", "554724-030"])),
+            ("shoe_kd8_usa", "Nike", "KD", "KD 8", "USA / 4th of July", "811363-123",
+             "Basketball", "Nike KD 8 USA", json.dumps(["KD8", "KD 8 USA", "811363-123"])),
+            ("shoe_free_flyknit", "Nike", "Free", "Free 3.0 Flyknit", "Black/White", "718418-002",
+             "Running", "Nike Free 3.0 Flyknit", json.dumps(["Free 3.0", "Flyknit 3.0", "718418-002"])),
+            ("shoe_air_max_lunar90", "Nike", "Air Max", "Air Max Lunar90", "Infrared / Black", "705302-003",
+             "Running", "Nike Air Max Lunar90", json.dumps(["Lunar90", "Air Max 90", "705302-003"])),
+            ("shoe_air_max_tr180", "Nike", "Air Max", "Air Max TR180 AMP", "Black/Gum", "723973-002",
+             "Training", "Nike Air Max TR180 AMP", json.dumps(["TR180", "Air Max TR", "723973-002"])),
             ("shoe_aj1_chicago", "Jordan", "Air Jordan", "Air Jordan 1", "Chicago", "555088-101",
              "Basketball", "Air Jordan 1 Retro High OG Chicago", json.dumps(["AJ1", "Jordan 1", "AJ1 Chicago"])),
             ("shoe_aj11_concord", "Jordan", "Air Jordan", "Air Jordan 11", "Concord", "378037-100",
@@ -169,10 +170,65 @@ def create_pilot_database(db_path: Optional[Path] = None) -> Path:
              "image", "image/png", "2017-10-15T13:10:00Z", "2017-10-15", "store-adi",
              "studio_cutout", "Studio Render (Cutout)", "640×640",
              "Adidas Ultraboost 3.0 Triple White October 2017 Studio Cutout"),
+
+            # 12. Authentic in-store camera shot: Kobe 9 Elite Box Label at Marketplace (Dec 2015) - Markdown $199.99
+            ("occ_kobe9_elite_dec15", "med_k9_dec15", "IMG_6604.JPG",
+             "61444f0c06f5050ee2eae40afd68e188f05e4e7fbf932a2af9fce5360493512e.jpg",
+             "image", "image/jpeg", "2015-12-17T20:25:00Z", "2015-12-17", "store-mkt",
+             "in_store_photo", "Apple iPhone 6", "3264×2448",
+             "KOBE IX ELITE 630847-077 Marketplace Clearance Box Label $199.99 Sighting"),
+
+            # 13. Authentic in-store camera shot: Air Jordan 13 Retro Box Tag at Marketplace (Dec 2018)
+            ("occ_aj13_dec18", "med_aj13_dec18", "IMG_8177.JPG",
+             "dd3ae18b772031e15bb03d1b1b7383f4c373013fe3ec29a48947ceb4e41d162f.jpg",
+             "image", "image/jpeg", "2018-12-19T21:10:00Z", "2018-12-19", "store-mkt",
+             "in_store_photo", "Apple iPhone 6", "3264×2448",
+             "AIR JORDAN 13 RETRO 414571-038 Marketplace In-Store Box Tag"),
+
+            # 14. Authentic in-store camera shot: Air Jordan 1 Mid Box Tag at Marketplace (Dec 2015)
+            ("occ_aj1_mid_dec15", "med_aj1m_dec15", "IMG_6626.JPG",
+             "9e2f08c1ebcc8b717702bd1450ee10466456e3b67346962d934d6ddc32c0a9c3.jpg",
+             "image", "image/jpeg", "2015-12-17T20:40:00Z", "2015-12-17", "store-mkt",
+             "in_store_photo", "Apple iPhone 6", "3264×2448",
+             "AIR JORDAN 1 MID 554724-030 Marketplace In-Store Box Tag $110"),
+
+            # 15. Authentic in-store camera shot: Nike KD 8 USA Rack Label at Marketplace (Dec 2015)
+            ("occ_kd8_dec15", "med_kd8_dec15", "IMG_6606.JPG",
+             "28d6ff8071da89af661a965d0c3d2d47d643976877a43eae8a107b30019f591a.jpg",
+             "image", "image/jpeg", "2015-12-17T20:26:00Z", "2015-12-17", "store-mkt",
+             "in_store_photo", "Apple iPhone 6", "3264×2448",
+             "NIKE KD 8 USA 811363-123 Marketplace In-Store Rack Label"),
+
+            # 16. Authentic in-store camera shot: Nike Free 3.0 Flyknit Box Label at Marketplace (Jan 2016)
+            ("occ_free_jan16", "med_free_jan16", "IMG_7988.JPG",
+             "98d6948c8d925a32724408f055a835e4bf777dc0922c52d7b16a9f2a98395aea.jpg",
+             "image", "image/jpeg", "2016-01-01T22:42:00Z", "2016-01-01", "store-mkt",
+             "in_store_photo", "Apple iPhone 6", "3264×2448",
+             "NIKE FREE 3.0 FLYKNIT 718418-002 Marketplace In-Store Box Label $140"),
+
+            # 17. Authentic in-store camera shot: Nike Air Max Lunar90 Clearance Rack Tag (Sep 2015)
+            ("occ_lunar90_sep15", "med_lunar90_sep15", "2015-09-15 22.24.21.jpg",
+             "776c661fc806a49b9a72f4eb555b1b3a91cf37e7455421e581563e06acd716ce.jpg",
+             "image", "image/jpeg", "2015-09-16T02:24:21Z", "2015-09-15", "store-mkt",
+             "in_store_photo", "Apple iPhone 6", "3264×2448",
+             "NIKE AIR MAX LUNAR90 705302-003 Marketplace Clearance Rack Tag $89"),
+
+            # 18. Authentic in-store camera shot: Nike Air Max TR180 AMP Box Label at Marketplace (Jan 2016)
+            ("occ_tr180_jan16", "med_tr180_jan16", "IMG_8001.JPG",
+             "cf9127d2c55f91ea9adbca6b796217f6451d7a72d0b3a49653efc944ec5b2d7d.jpg",
+             "image", "image/jpeg", "2016-01-01T22:53:00Z", "2016-01-01", "store-mkt",
+             "in_store_photo", "Apple iPhone 6", "3264×2448",
+             "NIKE AIR MAX TR180 AMP 723973-002 Marketplace In-Store Box Label $104.99"),
         ]
 
+        denivic_dir = Path("/Users/daplug/Documents/SACC_Data/recovery/denivic/objects")
         for oid, mid, name, obj_file, mtype, mime, cap_utc, eff_date, store_id, ctype, cam_model, res, stext in occurrences:
             obj_path = objects_dir / obj_file
+            if not obj_path.exists():
+                dpath = denivic_dir / obj_file
+                if dpath.exists():
+                    obj_path = dpath
+
             if obj_path.exists():
                 st = obj_path.stat()
                 file_size = st.st_size
@@ -249,6 +305,15 @@ def create_pilot_database(db_path: Optional[Path] = None) -> Path:
             ("assoc_lb12_box", "occ_lebron12_box_jan16", "shoe_lebron_12_low", "solo", None, 1.0, "Verified retail box label: LEBRON XII LOW (724557 565), MSRP $175.00", 175.00),
             ("assoc_lb12_pair", "occ_lebron12_pair_jan16", "shoe_lebron_12_low", "solo", None, 1.0, "Retail box pair with visible LeBron James crown logo ('LJ')", 139.99),
             ("assoc_lb12_rep", "occ_lebron12_rep_aug16", "shoe_lebron_12_low", "solo", None, 1.0, "Clearance rack repeat markdown", 99.99),
+
+            # 10. Discovered Real Marketplace Store Sightings from 3,161 Photo Scan
+            ("assoc_kobe9_elite", "occ_kobe9_elite_dec15", "shoe_kobe_9_elite", "solo", None, 1.0, "Verified in-store box label: KOBE IX ELITE (630847-077), clearance $199.99 from $225", 199.99),
+            ("assoc_aj13_retro", "occ_aj13_dec18", "shoe_aj13_retro", "solo", None, 1.0, "Verified in-store box tag: AIR JORDAN 13 RETRO (414571-038)", None),
+            ("assoc_aj1_mid", "occ_aj1_mid_dec15", "shoe_aj1_mid", "solo", None, 1.0, "Verified in-store box tag: AIR JORDAN 1 MID (554724-030), $110.00", 110.00),
+            ("assoc_kd8_usa", "occ_kd8_dec15", "shoe_kd8_usa", "solo", None, 1.0, "Verified in-store rack label: KD 8 USA (811363-123)", 129.99),
+            ("assoc_free_flyknit", "occ_free_jan16", "shoe_free_flyknit", "solo", None, 1.0, "Verified in-store box label: NIKE FREE 3.0 FLYKNIT (718418-002), $140.00", 140.00),
+            ("assoc_air_max_lunar90", "occ_lunar90_sep15", "shoe_air_max_lunar90", "solo", None, 1.0, "Verified clearance price tag: NIKE AIR MAX LUNAR90 (705302-003), $89.00", 89.00),
+            ("assoc_air_max_tr180", "occ_tr180_jan16", "shoe_air_max_tr180", "solo", None, 1.0, "Verified in-store box label: NIKE AIR MAX TR180 AMP (723973-002), MSRP $175.00 observed $104.99", 104.99),
         ]
 
         con.executemany(

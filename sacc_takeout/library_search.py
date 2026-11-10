@@ -427,6 +427,14 @@ def _compute_facets(
     except Exception:
         facets_stores = []
 
+    try:
+        all_store_rows = con.execute(
+            "SELECT id, code, label, valid_from, valid_to FROM library_stores ORDER BY label ASC"
+        ).fetchall()
+        all_stores = [dict(r) for r in all_store_rows]
+    except Exception:
+        all_stores = []
+
     # 3. Lines facet
     lines_sql = f"""
     SELECT s.line, COUNT(DISTINCT o.id)
@@ -459,6 +467,7 @@ def _compute_facets(
     return {
         "years": facets_years,
         "stores": facets_stores,
+        "all_stores": all_stores,
         "lines": facets_lines,
         "capture_types": facets_capture_types,
     }

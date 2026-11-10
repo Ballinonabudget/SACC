@@ -27,12 +27,13 @@ class LibrarySearchTests(unittest.TestCase):
         self.db = LibraryDB(self.db_path)
 
     def test_search_by_shoe_line_kobe(self):
-        """Searching 'Kobe' discovers solo, repeat, wall shot, and undated captures across models."""
+        """Searching 'Kobe' discovers solo, repeat, wall shot, undated, and real in-store box label sightings."""
         res = self.db.search_footwear(q="Kobe")
-        self.assertEqual(res["total"], 5)
+        self.assertEqual(res["total"], 6)
         titles = {r["display_title"] for r in res["results"]}
         self.assertIn("Kobe 11 Bruce Lee", titles)
         self.assertIn("Kobe 9 Elite Perspective", titles)
+        self.assertIn("Kobe 9 Elite", titles)
         self.assertIn("Nike Multiples", titles)
 
     def test_search_by_model_kobe_11(self):
@@ -67,7 +68,7 @@ class LibrarySearchTests(unittest.TestCase):
         """Filtering by store restricts results to that confirmed retail branch."""
         # Marketplace clearance
         res_mkt = self.db.search_footwear(q="Kobe", store="store-mkt")
-        self.assertEqual(res_mkt["total"], 4)
+        self.assertEqual(res_mkt["total"], 5)
         for r in res_mkt["results"]:
             self.assertEqual(r["store"]["id"], "store-mkt")
 
@@ -81,7 +82,7 @@ class LibrarySearchTests(unittest.TestCase):
         """Multiple capture years can be checked, unchecked, or undated."""
         # Check 2015 and 2016
         res_both = self.db.search_footwear(q="Kobe", years=["2015", "2016"])
-        self.assertEqual(res_both["total"], 4)  # 2015 Kobe 9 + 3x 2016 Kobe 11 occurrences
+        self.assertEqual(res_both["total"], 5)  # 2x 2015 Kobe 9 (1 real in-store box label + 1 cutout) + 3x 2016 Kobe 11 occurrences
 
         # Uncheck 2015 -> only 2016
         res_2016 = self.db.search_footwear(q="Kobe", years=["2016"])
@@ -112,8 +113,8 @@ class LibrarySearchTests(unittest.TestCase):
 
         # The same wall shot is discoverable via KD 8
         res_kd = self.db.search_footwear(q="KD 8")
-        self.assertEqual(res_kd["total"], 1)
-        self.assertEqual(res_kd["results"][0]["id"], wall_shot["id"])
+        self.assertEqual(res_kd["total"], 2)  # Wall shot + authentic KD 8 USA solo
+        self.assertTrue(any(r["id"] == wall_shot["id"] for r in res_kd["results"]))
 
     def test_repeat_sightings_separate_with_month_year(self):
         """Repeat sightings of the same shoe at the same store appear separately with capture dates."""
@@ -152,7 +153,7 @@ class LibrarySearchTests(unittest.TestCase):
             )
             self.assertEqual(search_res.status_code, 200)
             data = search_res.json()
-            self.assertEqual(data["total"], 3)
+            self.assertEqual(data["total"], 4)
 
             # Pilot facets
             facets_res = client.get(
@@ -166,9 +167,9 @@ class LibrarySearchTests(unittest.TestCase):
 
     def test_capture_type_filtering_and_metadata(self):
         """In-store camera photos and studio cutouts are categorized and filterable."""
-        # Search Kobe with in-store camera photos only -> returns 3 in-store occurrences
+        # Search Kobe with in-store camera photos only -> returns 4 in-store occurrences
         res_instore = self.db.search_footwear(q="Kobe", capture_type="in_store_photo")
-        self.assertEqual(res_instore["total"], 3)
+        self.assertEqual(res_instore["total"], 4)
         for r in res_instore["results"]:
             self.assertEqual(r["capture_type"], "in_store_photo")
             self.assertIn("iPhone", r["camera_model"])
@@ -178,6 +179,7 @@ class LibrarySearchTests(unittest.TestCase):
         self.assertEqual(res_studio["total"], 2)
         for r in res_studio["results"]:
             self.assertEqual(r["capture_type"], "studio_cutout")
+            self.assertEqual(r["camera_model"], "Studio Render (Cutout)")
             self.assertEqual(r["camera_model"], "Studio Render (Cutout)")
 
     def test_lebron_12_low_box_and_pair_sighting(self):
@@ -199,6 +201,41 @@ class LibrarySearchTests(unittest.TestCase):
         self.assertEqual(pair_card["display_title"], "LeBron 12 Low Court Purple")
         self.assertEqual(pair_card["capture_type"], "in_store_photo")
         self.assertEqual(pair_card["shoes"][0]["price_observed"], 139.99)
+
+    def test_real_kobe_9_elite_clearance_sighting(self):
+        """Discovered real Kobe 9 Elite (630847-077) markdown $199.99 from Marketplace photo scan."""
+        res = self.db.search_footwear(q="630847-077")
+        self.assertEqual(res["total"], 1)
+        card = res["results"][0]
+        self.assertEqual(card["display_title"], "Kobe 9 Elite")
+        self.assertEqual(card["capture_type"], "in_store_photo")
+        self.assertEqual(card["camera_model"], "Apple iPhone 6")
+        self.assertEqual(card["capture_month_year"], "December 2015")
+        self.assertEqual(card["store"]["code"], "ORL-MKT-CLR")
+        self.assertEqual(card["shoes"][0]["price_observed"], 199.99)
+        self.assertIn("630847-077", card["shoes"][0]["sku"])
+
+    def test_real_marketplace_ingested_sightings(self):
+        """Verify real discovered shoes from the Marketplace store photo scan."""
+        # Air Jordan 13 Retro (414571-038)
+        res_aj13 = self.db.search_footwear(q="414571-038")
+        self.assertEqual(res_aj13["total"], 1)
+        self.assertEqual(res_aj13["results"][0]["display_title"], "Air Jordan 13 Retro")
+
+        # Air Jordan 1 Mid (554724-030)
+        res_aj1 = self.db.search_footwear(q="554724-030")
+        self.assertEqual(res_aj1["total"], 1)
+        self.assertEqual(res_aj1["results"][0]["shoes"][0]["price_observed"], 110.00)
+
+        # Nike Free 3.0 Flyknit (718418-002)
+        res_free = self.db.search_footwear(q="718418-002")
+        self.assertEqual(res_free["total"], 1)
+        self.assertEqual(res_free["results"][0]["shoes"][0]["price_observed"], 140.00)
+
+        # Nike Air Max Lunar90 (705302-003)
+        res_lunar = self.db.search_footwear(q="705302-003")
+        self.assertEqual(res_lunar["total"], 1)
+        self.assertEqual(res_lunar["results"][0]["shoes"][0]["price_observed"], 89.00)
 
 
 if __name__ == "__main__":

@@ -182,7 +182,18 @@ function FootwearSearchPilot({ api, accent }) {
       if (store !== 'all') qParams.set('store', store);
       if (captureType !== 'all') qParams.set('capture_type', captureType);
       const data = await api('/pilot/facets?' + qParams.toString());
-      if (data && data.stores && data.stores.length) {
+      if (data && data.all_stores && data.all_stores.length) {
+        setAvailableStores([
+          { id: 'all', label: 'All Stores (Outlet Plug Directory)' },
+          ...data.all_stores.map(s => {
+            const isDefunct = s.label.toLowerCase().includes('defunct') || (s.valid_to && s.valid_to < '2025-01-01');
+            return {
+              ...s,
+              label: isDefunct ? `🏛️ ${s.label}` : s.label,
+            };
+          })
+        ]);
+      } else if (data && data.stores && data.stores.length) {
         setAvailableStores([
           { id: 'all', label: 'All stores' },
           ...data.stores
@@ -260,17 +271,26 @@ function FootwearSearchPilot({ api, accent }) {
         </div>
         <div className="sl-pilot-presets">
           <span className="sl-preset-label">Verification Presets:</span>
+          <button type="button" className="sl-pill-btn" onClick={() => setPreset('630847-077', 'store-mkt', ['2015'], 'in_store_photo')}>
+            🔥 Kobe IX Elite ($199.99 @ Marketplace)
+          </button>
           <button type="button" className="sl-pill-btn" onClick={() => setPreset('724557-565', 'store-mkt', ['2016'], 'in_store_photo')}>
             👑 LeBron 12 Low (Box + Pair @ Marketplace)
           </button>
-          <button type="button" className="sl-pill-btn" onClick={() => setPreset('Kobe', 'all', ['2015', '2016', '2017', '2018', 'undated'], 'studio_cutout')}>
-            🎨 Kobe Studio Cutouts (Ref Renders)
+          <button type="button" className="sl-pill-btn" onClick={() => setPreset('414571-038', 'store-mkt', ['2018'], 'in_store_photo')}>
+            🏀 Air Jordan 13 Retro (Marketplace)
+          </button>
+          <button type="button" className="sl-pill-btn" onClick={() => setPreset('554724-030', 'store-mkt', ['2015'], 'in_store_photo')}>
+            ⚡ Air Jordan 1 Mid ($110 @ Marketplace)
+          </button>
+          <button type="button" className="sl-pill-btn" onClick={() => setPreset('718418-002', 'store-mkt', ['2016'], 'in_store_photo')}>
+            👟 Nike Free 3.0 Flyknit ($140)
           </button>
           <button type="button" className="sl-pill-btn" onClick={() => setPreset('Kobe', 'store-mkt', ['2015', '2016'], 'in_store_photo')}>
             📸 Kobe In-Store (Marketplace)
           </button>
-          <button type="button" className="sl-pill-btn" onClick={() => setPreset('822675-706', 'all', ['2015', '2016', '2017', '2018', 'undated'], 'all')}>
-            SKU: 822675-706 (Kobe Bruce Lee)
+          <button type="button" className="sl-pill-btn" onClick={() => setPreset('Kobe', 'all', ['2015', '2016', '2017', '2018', 'undated'], 'studio_cutout')}>
+            🎨 Kobe Studio Cutouts (Ref Renders)
           </button>
           <button type="button" className="sl-pill-btn" onClick={() => setPreset('Nike Multiples', 'all', ['2015', '2016', '2017', '2018', 'undated'], 'all')}>
             Wall Shot: Nike Multiples
